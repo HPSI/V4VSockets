@@ -11,7 +11,7 @@ struct v4v_dev
 
 struct v4v_viptables_rule_pos
 {
-    struct v4v_viptables_rule* rule;
+    struct v4vtables_rule* rule;
     int position;
 };
 
@@ -29,6 +29,6 @@ struct v4v_viptables_rule_pos
 #define V4VIOCRECV		_IOW (V4V_TYPE, 10, struct v4v_dev)
 #define V4VIOCVIPTABLESADD	_IOW (V4V_TYPE, 11, struct v4v_viptables_rule_pos)
 #define V4VIOCVIPTABLESDEL	_IOW (V4V_TYPE, 12, struct v4v_viptables_rule_pos)
-#define V4VIOCVIPTABLESLIST	_IOW (V4V_TYPE, 13, struct v4v_viptables_list)
+#define V4VIOCVIPTABLESLIST	_IOW (V4V_TYPE, 13, struct v4vtables_list)
 
 #endif
