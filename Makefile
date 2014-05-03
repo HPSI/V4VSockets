@@ -21,7 +21,7 @@ endif
 
 TARGET  = v4v
 
-EXTRA_CFLAGS += -I$(obj)/../../common -I$(obj)/../../../common 
+EXTRA_CFLAGS += -I$(obj)/../../common -I$(obj)/../../../common -I/local/ialif-xen/xen-v4v/xen/include
 
 # If KERNELRELEASE is defined, we've been invoked from the kernel build system
 # and can use its language.

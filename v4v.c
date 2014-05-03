@@ -40,7 +40,9 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/list.h>
+#include <linux/random.h>
 #include <linux/socket.h>
+#include <linux/slab.h>
 #include <linux/sched.h>
 #include <xen/events.h>
 #include <xen/evtchn.h>
@@ -59,6 +61,7 @@
 
 //#include <xen/interface/v4v.h>
 //#include <xen/v4vdev.h>
+#include <public/v4v.h>
 #include "v4v.h"
 #include "v4vdev.h"
 #include "v4v_utils.h"
@@ -295,7 +298,7 @@ static uint32_t v4v_random_port(void)
 {
         uint32_t port;
 
-        port = random32();
+        port = prandom_u32();
         port |= 0x80000000U;
         if (port > 0xf0000000U) {
                 port -= 0x10000000;
@@ -640,7 +643,7 @@ xmit_queue_inline(struct v4v_ring_id *from, v4v_addr_t * to,
 	v4v_iov_t *iovs = kmalloc(sizeof(v4v_iov_t), GFP_KERNEL);
 
         spin_lock_irqsave(&pending_xmit_lock, flags);
-							
+
 	/*jo : modification*/
 	iovs->iov_base = (uintptr_t)buf;
 	iovs->iov_len = len;
@@ -979,7 +982,7 @@ static int connector_interrupt(struct ring *r)
 		//printk(KERN_INFO "MOAN\n");
                 return -1;
         }
-	
+
 	//printk(KERN_INFO "Before Peek the header\n");
         msg_len = v4v_copy_out(r->ring, &from, &protocol, &sh, sizeof(sh), 0);  /* Peek the header */
         if (msg_len == -1) {
@@ -1096,7 +1099,7 @@ static int listener_interrupt(struct ring *r)
                 return ret;
         }
 	//printk(KERN_INFO "%s: msg_len = %d\n", __func__, msg_len);
-	
+
         if ((protocol != V4V_PROTO_STREAM) || (msg_len < sizeof(sh))) {
                 /* Wrong protocol bin it */
 		//printk(KERN_INFO "%s: Wrong protocol\n",__func__);
@@ -1216,7 +1219,7 @@ static void v4v_interrupt_rx(void)
 static irqreturn_t v4v_interrupt(int irq, void *dev_id)
 {
         unsigned long flags;
-				
+
 	/*jo : trace*/
         spin_lock_irqsave(&interrupt_lock, flags);
         v4v_interrupt_rx();
@@ -1308,7 +1311,7 @@ v4v_try_send_sponsor(struct v4v_private *p,
         unsigned long flags;
 
         ret = H_v4v_send(&p->r->ring->id.addr, dest, buf, len, protocol);
-	//printk(KERN_INFO "%s : ret = %d\n", __func__, ret); 
+	//printk(KERN_INFO "%s : ret = %d\n", __func__, ret);
         spin_lock_irqsave(&pending_xmit_lock, flags);
         if (ret == -EAGAIN) {
                 /* Add pending xmit */
@@ -1408,7 +1411,7 @@ v4v_sendto_from_sponsor(struct v4v_private *p,
 
         if (len > (p->r->ring->len - sizeof(struct v4v_ring_message_header)))
                 return -EMSGSIZE;
-	//printk(KERN_INFO "%s len = %d, ring_len = %d, mh = %d\n", __func__, len, p->r->ring->len, sizeof(struct v4v_ring_message_header));		
+	//printk(KERN_INFO "%s len = %d, ring_len = %d, mh = %d\n", __func__, len, p->r->ring->len, sizeof(struct v4v_ring_message_header));
         if (ret)
                 return ret;
 
@@ -1571,9 +1574,9 @@ static int v4v_set_ring_size(struct v4v_private *p, uint32_t ring_size)
 {
 
         if (ring_size <
-            (sizeof(struct v4v_ring_message_header) + V4V_ROUNDUP(1))) 
+            (sizeof(struct v4v_ring_message_header) + V4V_ROUNDUP(1)))
                 return -EINVAL;
-	
+
         if (ring_size != V4V_ROUNDUP(ring_size))
                 return -EINVAL;
         read_lock(&list_lock);
@@ -1703,7 +1706,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                                 break;
 			}
                 }
-                        
+
                 spin_lock_irqsave(&p->pending_recv_lock, flags);
 
                 while (!list_empty(&p->pending_recv_list) && len) {
@@ -1729,7 +1732,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                                 read_unlock(&list_lock);
                                 return -EFAULT;
                         }
-                        
+
                         if (copy_to_user(buf, pending->data + pending->data_ptr, to_copy))
                         {
                                 spin_unlock_irqrestore(&p->pending_recv_lock, flags);
@@ -1750,7 +1753,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                         count += to_copy;
                         len -= to_copy;
                 }
-                        
+
                 spin_unlock_irqrestore(&p->pending_recv_lock, flags);
 
                 if (p->state == V4V_STATE_DISCONNECTED) {
@@ -1840,9 +1843,9 @@ static int v4v_bind(struct v4v_private *p, struct v4v_ring_id *ring_id)
 {
         int ret = 0;
 
-	/*jo : trace*/		
+	/*jo : trace*/
 	//printk(KERN_INFO "In v4v_bind domain = %d malakia = %d\n", ring_id->addr.domain, V4V_DOMID_NONE);
-	
+
         if (ring_id->addr.domain != V4V_DOMID_NONE) {
                 return -EINVAL;
         }
@@ -1904,7 +1907,7 @@ static int v4v_connect(struct v4v_private *p, v4v_addr_t * peer, int nonblock)
         if (p->ptype != V4V_PTYPE_STREAM) {
                 return -EINVAL;
         }
-				
+
 	/*jo : trace*/
 	//printk(KERN_INFO "ftanei ws edw");
 
@@ -1915,7 +1918,7 @@ static int v4v_connect(struct v4v_private *p, v4v_addr_t * peer, int nonblock)
 		//printk(KERN_INFO "mpainei sthn connect sto bound");
                 p->r->type = V4V_RTYPE_CONNECTOR;
                 p->state = V4V_STATE_CONNECTING;
-                p->conid = random32();
+                p->conid = prandom_u32();
                 p->peer = *peer;
 
                 sh.flags = V4V_SHF_SYN;
@@ -1928,7 +1931,7 @@ static int v4v_connect(struct v4v_private *p, v4v_addr_t * peer, int nonblock)
                         ret = 0;
 		  /*jo : trace*/
 		//printk(KERN_INFO "meta to xmit to ret = %d\n",ret);
-								
+
 
                 if (ret && (ret != -EAGAIN)) {
                         p->state = V4V_STATE_BOUND;
@@ -1937,7 +1940,7 @@ static int v4v_connect(struct v4v_private *p, v4v_addr_t * peer, int nonblock)
                 }
 
                 break;
-        case V4V_STATE_CONNECTED:	
+        case V4V_STATE_CONNECTED:
 		/*jo : trace*/
 		//printk(KERN_INFO "mpainei sto connected\n");
 
@@ -1977,7 +1980,7 @@ static int v4v_connect(struct v4v_private *p, v4v_addr_t * peer, int nonblock)
                         p->state = V4V_STATE_BOUND;
                         p->r->type = V4V_RTYPE_DGRAM;
                         ret = -ECONNREFUSED;
-			/*jo : trace */									
+			/*jo : trace */
 			//printk(KERN_INFO "mpanei edw mesa\n");
                         break;
                 }
@@ -2035,7 +2038,7 @@ v4v_accept(struct v4v_private *p, struct v4v_addr *peer, int nonblock)
         struct pending_recv *r = NULL;
         unsigned long flags;
         struct v4v_stream_header sh;
-	
+
 
 	//printk(KERN_INFO "%s: Entering\n", __func__);
         if (p->ptype != V4V_PTYPE_STREAM)
@@ -2390,7 +2393,7 @@ v4v_read(struct file *f, char __user * buf, size_t count, loff_t * ppos)
 static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
         int rc = -ENOTTY;
-	
+
         int nonblock = f->f_flags & O_NONBLOCK;
         struct v4v_private *p = f->private_data;
 
@@ -2609,11 +2612,11 @@ static int bind_evtchn(void)
 {
         v4v_info_t info;
         int result;
-        
+
         v4v_info(&info);
 	//printk(KERN_INFO "echoing ring magic diff!, info.ring_magic = %#lx, %#lx\n", info.ring_magic, V4V_RING_MAGIC);
         if (info.ring_magic != V4V_RING_MAGIC) {
-		//printk(KERN_INFO "ring magic diff!, info.ring_magic = %#lx, %#lx\n", info.ring_magic, V4V_RING_MAGIC);
+		printk(KERN_INFO "ring magic diff!, info.ring_magic = %#lx, %#lx\n", info.ring_magic, V4V_RING_MAGIC);
                 return 1;
 	}
 	/*jo : DOMID_SELF ok*/
