@@ -1,6 +1,6 @@
 # Comment/uncomment the following line to disable/enable debugging
-EXTRA_DEBUG = y
-DEBUG = y
+EXTRA_DEBUG = n
+DEBUG = n
 
 ETAGS=etags 
 
@@ -9,19 +9,19 @@ ifeq ($(DEBUG),y)
   EXTRA_CFLAGS += -O -g -Wall -Wstrict-prototypes -DDEBUG_SLURPOE
   # "-O" is needed to expand inlines
 else
-  EXTRA_CFLAGS += -O2 
+  EXTRA_CFLAGS += -O
 endif
 
 ifeq ($(EXTRA_DEBUG),y)
   EXTRA_CFLAGS += -O -g -Wall -Wstrict-prototypes -DEXTRA_DEBUG_SLURPOE
   # "-O" is needed to expand inlines
 else
-  EXTRA_CFLAGS += -O2 
+  EXTRA_CFLAGS += -O3
 endif
 
 TARGET  = v4v
 
-EXTRA_CFLAGS += -I$(obj)/../../common -I$(obj)/../../../common -I/local/ialif-xen/xen-v4v/xen/include
+EXTRA_CFLAGS += -I$(obj)/../../common -I$(obj)/../../../common -I/local/ialif-xen/xen-v4v/xen/include #-DV4V_DEBUG
 
 # If KERNELRELEASE is defined, we've been invoked from the kernel build system
 # and can use its language.

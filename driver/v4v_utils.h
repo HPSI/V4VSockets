@@ -18,6 +18,18 @@
 #ifndef __V4V_UTILS_H__
 # define __V4V_UTILS_H__
 
+#ifdef V4V_DEBUG
+#define dprintk(fmt, args...) printk(KERN_INFO"%s:%d: " fmt, __FUNCTION__, __LINE__, args)
+#define dprintk_info(fmt) printk(KERN_INFO "%s:%d: " fmt, __FUNCTION__, __LINE__)
+#define dprintk_in() dprintk_info("enter\n")
+#define dprintk_out() dprintk_info("exit\n")
+#else
+#define dprintk(args...) 
+#define dprintk_info(fmt) 
+#define dprintk_in()
+#define dprintk_out()
+#endif
+
 /* Compiler specific hacks */
 #if defined(__GNUC__)
 # define V4V_UNUSED __attribute__ ((unused))
@@ -39,11 +51,17 @@ static V4V_INLINE uint32_t
 v4v_ring_bytes_to_read (volatile struct v4v_ring *r)
 {
         int32_t ret;
+
+	dprintk_in();
+
         ret = r->tx_ptr - r->rx_ptr;
-      //printk(KERN_INFO "%s: tx= %li, rx= %li, ret = %d \n", __func__, (unsigned long)r->tx_ptr, (unsigned long)r->rx_ptr, ret);
-        if (ret >= 0)
-                return ret;
-        return (uint32_t) (r->len + ret);
+        dprintk("%s: tx= %li, rx= %li, ret = %d \n", __func__, (unsigned long)r->tx_ptr, (unsigned long)r->rx_ptr, ret);
+        if (ret < 0)
+                ret += r->len;
+
+	dprintk_out();
+
+        return (uint32_t) ret;
 }
 
 
@@ -68,10 +86,11 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
         ssize_t ret;
 
 
-        //printk(KERN_INFO "entering: %s, rx = %li, tx = %li\n", __func__, (unsigned long)r->rx_ptr, (unsigned long)r->tx_ptr);
-	//printk(KERN_INFO "%s: btr = %#lu, mh = %#lx, r = %#lx", __func__, btr, sizeof(*mh), (unsigned long)r);
+	dprintk_in();
+        dprintk("%s: rx = %li, tx = %li\n", __func__, (unsigned long)r->rx_ptr, (unsigned long)r->tx_ptr);
+	dprintk("%s: btr = %#lu, mh = %#lx, r = %#lx", __func__, btr, sizeof(*mh), (unsigned long)r);
         if (btr < sizeof (*mh)) {
-		//printk(KERN_INFO "%s: btr < sizeof(*mh): %li < %lu\n", __func__, (unsigned long)btr, sizeof(*mh));		
+		printk(KERN_INFO "%s: btr < sizeof(*mh): %li < %lu\n", __func__, (unsigned long)btr, sizeof(*mh));		
                 ret = -1;
                 goto out;
         }
@@ -83,13 +102,14 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
 
 
         mh = (volatile struct v4v_ring_message_header *) &r->ring[r->rx_ptr];
+	dprintk("%s: r->rx_ptr: %#lx\n", __func__, (unsigned long)r->rx_ptr);		
 	
 
         len = mh->len;
         
         if (btr < len)
         {
-		//printk(KERN_INFO "%s: btr < len: %li < %li\n", __func__, (unsigned long)btr, (unsigned long)len);		
+		printk(KERN_ERR "%s: btr < len: %li < %li\n", __func__, (unsigned long)btr, (unsigned long)len);		
 		ret = -1;
 		goto out;
         }
@@ -103,10 +123,10 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
                 memcpy((void *) from, (void *) &(mh->source), sizeof(struct v4v_addr));
 #endif
 
-        //printk(KERN_INFO "%s: PORT = %lu, DOMAIN = %lu\n", __func__, from->port, from->domain);
+        dprintk("PORT = %lu, DOMAIN = %lu\n", from->port, from->domain);
         if (protocol)
                 *protocol = mh->message_type;
-        //printk(KERN_INFO "%s: after protocol \n", __func__);
+        dprintk_info("after protocol \n");
 
         rxp += sizeof (*mh);
         if (rxp == r->len)
@@ -116,8 +136,8 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
 
         bte = r->len - rxp;
 	
-	//printk(KERN_INFO "%s: print INDEX\n", __func__);
-	//printk(KERN_INFO "rxp = %li, bte = %li, btr = %li, len = %li, t = %li\n", (unsigned long)rxp, (unsigned long)bte, (unsigned long)btr, (unsigned long)len, (unsigned long)t);
+	dprintk_info("print INDEX\n");
+	dprintk("rxp = %li, bte = %li, btr = %li, len = %li, t = %li\n", (unsigned long)rxp, (unsigned long)bte, (unsigned long)btr, (unsigned long)len, (unsigned long)t);
 
         if (bte < len)
         {
@@ -132,7 +152,7 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
                         rxp = 0;
                         len -= bte;
                         t = 0;
-			//printk(KERN_INFO "t<bte rxp = t = 0, len = %li\n", (unsigned long)len);
+			dprintk("t<bte rxp = t = 0, len = %li\n", (unsigned long)len);
                 }
                 else
                 {
@@ -144,14 +164,14 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
                         rxp = 0;
                         len -= bte;
                         t -= bte;
-			//printk(KERN_INFO "t>bte rxp = 0, t= %li, len = %li\n", (unsigned long)t, (unsigned long)len);
+			dprintk("t>bte rxp = 0, t= %li, len = %li\n", (unsigned long)t, (unsigned long)len);
                 }
         }
 
         if (buf && t) 
                 memcpy (buf, (void *) &r->ring[rxp], (t < len) ? t : len);
 	
-	//printk(KERN_INFO "%s: len before round up len = %li, rxp = %li, r->len = %li\n, round = %li", __func__, (unsigned long)len, (unsigned long)rxp, (unsigned long)r->len, V4V_ROUNDUP (len));
+	dprintk("len before round up len = %li, rxp = %li, r->len = %li, round = %li", (unsigned long)len, (unsigned long)rxp, (unsigned long)r->len, V4V_ROUNDUP (len));
         
 	//rxp += V4V_ROUNDUP (len);
 	/*jo magic*/
@@ -160,25 +180,25 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
         if (rxp == r->len)
                 rxp = 0;
 
-	//printk(KERN_INFO "after round up rxp = %li, rx = %li\n", (unsigned long)rxp, (unsigned long)r->rx_ptr);
+	dprintk("after round up rxp = %li, rx = %li\n", (unsigned long)rxp, (unsigned long)r->rx_ptr);
         mb ();
 
         if (consume){
-		//printk(KERN_INFO "%s: In consume rxp = %li\n", __func__, (unsigned long)rxp); 
+		dprintk("%s: In consume rxp = %li\n", __func__, (unsigned long)rxp); 
 		/*!jo magic*/
 	        //r->rx_ptr = rxp;
 		r->rx_ptr = V4V_ROUNDUP(rxp);
 		/*jo magic end*/
-		//printk(KERN_INFO "%s: In consume rx = %li\n", __func__, (unsigned long)r->rx_ptr);
+		dprintk("%s: In consume rx = %li\n", __func__, (unsigned long)r->rx_ptr);
 	}
 
-//	if (buf)
-        	//printk(KERN_INFO "buf is: %#lx\n", (unsigned long)buf);
-//	if (from)
-        	//printk(KERN_INFO "from is: %#lx\n", (unsigned long) from);
+        dprintk("buf is: %#lx\n", (unsigned long) (buf ? buf : 0));
+        dprintk("from is: %#lx\n", (unsigned long) (from ? from : 0));
         //printk(KERN_INFO "%s: len= %#lx mh (@ %#llx) = %s, buf (@ %#llx) = %s\n", __func__, (unsigned long) len,(unsigned long long) mh, (char *) &r->ring[rxp], (unsigned long long) buf, (char*) buf);
 out:
-//	printk("%s: Exiting, ret= %d\n rx = %li, tx = %li",__func__, ret, (unsigned long)r->rx_ptr, (unsigned long)r->tx_ptr);
+	dprintk("%s: ret= %d rx = %li, tx = %li",__func__, ret, (unsigned long)r->rx_ptr, (unsigned long)r->tx_ptr);
+
+	dprintk_out();
         return ret;
 }
 
@@ -188,16 +208,17 @@ v4v_memcpy_skip (void *_dst, const void *_src, size_t len, size_t *skip)
         const uint8_t *src =  (const uint8_t *) _src;
         uint8_t *dst = (uint8_t *) _dst;
 
+	dprintk_in();
         if (!*skip)
         {
                 memcpy (dst, src, len);
-                return;
+                goto out;
         }
 
         if (*skip >= len)
         {
                 *skip -= len;
-                return;
+                goto out;
         }
 
         src += *skip;
@@ -206,6 +227,8 @@ v4v_memcpy_skip (void *_dst, const void *_src, size_t len, size_t *skip)
         *skip = 0;
 
         memcpy (dst, src, len);
+out:
+	dprintk_out();
 }
 
 /*
@@ -231,12 +254,15 @@ v4v_copy_out_offset(struct v4v_ring *r, struct v4v_addr *from,
         uint32_t rxp = r->rx_ptr;
         uint32_t bte;
         uint32_t len;
-        ssize_t ret;
+        ssize_t ret = 0;
 
+	dprintk_in();
         buf -= skip;
 
-        if (btr < sizeof (*mh))
-                return -1;
+        if (btr < sizeof (*mh)) {
+                ret = -1;
+                goto out;
+        }
 
         /*
          * Becuase the message_header is 128 bits long and the ring is 128 bit
@@ -245,8 +271,10 @@ v4v_copy_out_offset(struct v4v_ring *r, struct v4v_addr *from,
         mh = (volatile struct v4v_ring_message_header *)&r->ring[r->rx_ptr];
 
         len = mh->len;
-        if (btr < len)
-                return -1;
+        if (btr < len) {
+                ret = -1;
+                goto out;
+	}
 
 #if defined(__GNUC__)
         if (from)
@@ -310,6 +338,8 @@ v4v_copy_out_offset(struct v4v_ring *r, struct v4v_addr *from,
         if (consume)
                 r->rx_ptr = rxp;
 
+out:
+	dprintk_out();
         return ret;
 }
 

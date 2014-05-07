@@ -19,9 +19,9 @@ v4v_addr_t peer;
 unsigned long inet_addr(char *cp) {
 	int ret = -1;
 	if(!strcmp(cp,"192.168.129.2"))
-		ret = 2;
+		ret = 1;
 	if(!strcmp(cp,"192.168.129.3"))
-		ret = 3;
+		ret = 2;
 	return ret;
 }
 
@@ -34,12 +34,14 @@ int socket(int domain, int type, int protocol) {
 		ring_size = protocol;
 		if (type == SOCK_STREAM) {
 			real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 92);
+			//real_ring_size = protocol;
 			fd = open("/dev/v4v_stream", flags);
 		}
 		else { 
 			dgram = 1;
 			fd = open("/dev/v4v_dgram", flags);
 			real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 84);
+			//real_ring_size = protocol;
 		}
 		if (fd > 0)
 			ret = ioctl(fd, V4VIOCSETRINGSIZE, &real_ring_size);
@@ -97,10 +99,16 @@ int listen(int sockfd, int backlog)	{
 
 ssize_t my_read(int sockfd, void *buf, size_t len) {
 	int ret = 0, rtotal = 0;
+	int i;
 	
 	while(rtotal < len) {
 		ret = read(sockfd, buf + (rtotal ? rtotal : 0), len - rtotal);
                 if (ret < 0 ) {
+			printf(" buf@%p\n", buf + (rtotal ? rtotal : 0));
+			printf(" ret %d\n", ret);
+			//for (i = 0; i< len; i++) {
+			    //printf ("%c", ((char*)buf)[i]);
+			//}
                         perror("read");
                         exit(-1);
                 }

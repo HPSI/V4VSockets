@@ -19,9 +19,9 @@ v4v_addr_t peer;
 unsigned long inet_addr(char *cp) {
 	int ret = -1;
 	if(!strcmp(cp,"192.168.129.2"))
-		ret = 2;
+		ret = 1;
 	if(!strcmp(cp,"192.168.129.3"))
-		ret = 3;
+		ret = 2;
 	return ret;
 }
 

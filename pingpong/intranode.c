@@ -49,6 +49,13 @@ int iteration_num = -1;
 
 void* aligned_malloc(size_t size) {
 	void *ptr;
+	posix_memalign(&ptr, 4096, size);
+	//ptr = malloc(size);
+	return ptr;
+}
+#if 0
+void* aligned_malloc(size_t size) {
+	void *ptr;
 	void *p = malloc(size+ALIGN-1+sizeof(void*));
 	if(p!=NULL) {
 		ptr = (void*) (((unsigned int)p + sizeof(void*) + ALIGN -1) & ~(ALIGN-1));
@@ -57,12 +64,18 @@ void* aligned_malloc(size_t size) {
 	}
 	return NULL;
 }
+#endif
+void aligned_free(void *p) {
+	free(p);
+}
 
+#if 0
 void aligned_free(void *p) {
 	void *ptr = *((void**)((unsigned int)p - sizeof(void*)));
 	free(ptr);
 	return;
 }
+#endif
 
 void client_dgram() {
 	int flags = 0;
@@ -97,12 +110,13 @@ void client_dgram() {
                 exit(-1);
         }
         serLen = sizeof(server);
-	        for(data_size = initial_data_size; data_size <= last_data_size; data_size<<=1 ) {
+	        for(data_size = initial_data_size; data_size <= last_data_size; data_size+=1 ) {
         TIMER_RESET(&timer_total);
         /*write*/
-                writer = (unsigned char*) malloc(data_size);
-                reader = (unsigned char*) malloc(data_size);
+                writer = (char*) aligned_malloc(data_size);
+                reader = (char*) aligned_malloc(data_size);
                 initialize_data(writer, data_size);
+                initialize_data(reader, data_size);
                 if (print_enabled) {
                 	print(writer, data_size);
         	}
@@ -126,7 +140,7 @@ void client_dgram() {
                                 ret = recvfrom(fd, reader, data_size, flags, (struct sockaddr*) &server, (socklen_t *) &serLen);
 				TIMER_STOP(&timer_read);
                                 if (ret<0) {
-                                        perror("read");
+                                        perror("raaaaead");
                                         exit(-1);
                                 }
 
@@ -140,8 +154,8 @@ void client_dgram() {
                         //printf("\nwrite %ld %ld\n", TIMER_COUNT(&timer_write), TIMER_TOTAL(&timer_write));
                 }
                 TIMER_STOP(&timer_total);
-                free(reader);
-                free(writer);
+                aligned_free(reader);
+                aligned_free(writer);
 		time_read = TIMER_AVG(&timer_read);
                 time_write = TIMER_AVG(&timer_write);
                 time_total = time_read + time_write;
@@ -165,7 +179,7 @@ void client() {
 	struct sockaddr_in client, server;
 	timers_t timer_read, timer_write, timer_total;
 	double time_read, time_write, time_total;
-	
+
 	/*socket*/
 	fd = socket(family, type, protocol);
 	if(fd<0) {
@@ -184,7 +198,7 @@ void client() {
 	cliLen  = sizeof(client);
 	/*connect*/
 	server.sin_family = family;
-	server.sin_port = htons(SERVER_PORT+p);	
+	server.sin_port = htons(SERVER_PORT+p);
 	server.sin_addr.s_addr = partner_address;
 	ret = connect(fd, (struct sockaddr *)&server, sizeof(server));
 	if (ret<0) {
@@ -192,15 +206,18 @@ void client() {
 		exit(-1);
 	}
 	serLen = sizeof(server);
-	for(data_size = initial_data_size; data_size <= last_data_size; data_size<<=1 ) {
+	for(data_size = initial_data_size; data_size <= last_data_size; data_size<<=1) {
 	TIMER_RESET(&timer_total);
 	/*write*/
-		writer = (unsigned char*) malloc(data_size);
-		reader = (unsigned char*) malloc(data_size);
+		writer = (char*) aligned_malloc(data_size);
+		reader = (char*) aligned_malloc(data_size);
+		printf ("write ptr @%p\n", writer);
+		printf ("read ptr @%p\n", reader);
 		initialize_data(writer, data_size);
+		initialize_data(reader, data_size);
 		if (print_enabled) {
         		print(writer, data_size);
-        	}     
+        	}
 		TIMER_START(&timer_total);
 		TIMER_RESET(&timer_read);
 		TIMER_RESET(&timer_write);
@@ -221,7 +238,7 @@ void client() {
     				ret = recvfrom(fd, reader + (rtotal ? rtotal :0), data_size - rtotal, flags, (struct sockaddr*) &server, (socklen_t *) &serLen);
 				TIMER_STOP(&timer_read);
 				if (ret<0) {
-					perror("read");
+					perror("rsssead");
 					exit(-1);
 				}
 
@@ -235,8 +252,8 @@ void client() {
 			//printf("\nwrite %ld %ld\n", TIMER_COUNT(&timer_write), TIMER_AVG(&timer_write));
 		}
 		TIMER_STOP(&timer_total);
-		free(reader);	
-		free(writer);
+		aligned_free(reader);
+		aligned_free(writer);
 		/*total time*/
 		//printf("%ld %lf %lf \n", data_size, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num / (TIMER_TOTAL(&timer_total) / 2));
 		time_read = TIMER_AVG(&timer_read);
@@ -291,18 +308,20 @@ void server_stream() {
 	if (ret<0) {
 		perror("accept");
 		exit(-1);
-	} 
+	}
 	new_fd = ret;
 	/*read*/
 	for(data_size = initial_data_size; data_size<= last_data_size; data_size<<=1) {
-    		reader = (unsigned char*) malloc(data_size);
+    		reader = (char*) aligned_malloc(data_size);
+                initialize_data(reader, data_size);
 		for(i=0; i < iteration_num; i++) {
 			int rtotal = 0, wtotal = 0;
 			//ret = read(new_fd, reader, data_size);
 			while(rtotal < data_size) {
     	    			ret = recvfrom(new_fd, reader + (rtotal ? rtotal : 0), data_size - rtotal, flags, (struct sockaddr *) &client, (socklen_t *) &cliLen);
         			if (ret<0) {
-                			perror("read");
+					printf("ret = %d\n", ret);
+                			perror("reaaaaad");
                 			exit(-1);
         			}
 				rtotal += ret;
@@ -322,8 +341,8 @@ void server_stream() {
 				wtotal += ret;
 			}
 		}
-		free(reader);
-	}	
+		aligned_free(reader);
+	}
 	sleep(2);
 	close(fd);
 	close(new_fd);
@@ -340,7 +359,7 @@ void server_dgram() {
 	if (fd<0) {
 		perror("socket");
 		exit(-1);
-	} 
+	}
 	server.sin_family = family;
 	server.sin_addr.s_addr = my_address;
 	server.sin_port = htons(SERVER_PORT+p);
@@ -349,7 +368,7 @@ void server_dgram() {
 	ret = bind(fd, (struct sockaddr *) &server, sizeof(server));
 	if (ret<0) {
 		perror("bind");
-		exit(-1); 
+		exit(-1);
 	}
 
 	/***********************/
@@ -365,16 +384,17 @@ void server_dgram() {
 	/***********************/
 	for(data_size=initial_data_size; data_size<=last_data_size; data_size<<=1) {
 	/*read*/
-		reader = (unsigned char*) malloc(data_size);
+		reader = (char*) aligned_malloc(data_size);
+                initialize_data(reader, data_size);
 		for(i=0; i<iteration_num; i++) {
 			int rtotal = 0, wtotal = 0;
 			//ret = read(fd, reader, data_size);
 			//while(rtotal < data_size) {
 				ret = recvfrom(fd, reader, data_size, flags, (struct sockaddr *) &client, (socklen_t *) &cliLen);
 				if (ret<0) {
-					perror("read");
+					perror("raaaaead");
 					exit(-1);
-				}	
+				}
 			//	rtotal += ret;
 			//}
 			if (print_enabled) {
@@ -392,7 +412,7 @@ void server_dgram() {
 			//	wtotal += ret;
 			//}
 		}
-		free(reader);
+		aligned_free(reader);
 	}
 	close(fd);
 	return;
@@ -406,7 +426,7 @@ void print_usage() {
 
 void print(unsigned char *buf, uint32_t size) {
 	int i;
-	for(i=0; i<size; i++) 
+	for(i=0; i<size; i++)
 		printf("%d ", buf[i]);
 	printf("\n\n");
 	return;
@@ -421,7 +441,7 @@ int validate_data(unsigned char* reader, unsigned char* writer, uint32_t size) {
 			return(-1);
 		}
 	return 0;
-} 
+}
 
 void initialize_data(unsigned char *buf, uint32_t size) {
 	int i;
@@ -440,7 +460,7 @@ int main(int argc, char** argv) {
 	timers_t hpt2;
 
         /* timer example */
-        /* 
+        /*
         TIMER_RESET(&hpt1);
         TIMER_START(&hpt1);
 	sleep(4);
@@ -456,9 +476,11 @@ int main(int argc, char** argv) {
 		switch(c) {
 		case 'o':/*partners id*/
 			partner_address = inet_addr(optarg);
-			break;	
+			printf("%u:\n", partner_address);
+			break;
 		case 'm':/*my id*/
 			my_address = inet_addr(optarg);
+			printf("%u:\n", my_address);
 			break;
 		case 's':
 			mode |= FLAG_SERVER;
@@ -503,18 +525,18 @@ int main(int argc, char** argv) {
 			exit(-1);
 			break;
 		}
-	
+
 	temp = mode&FLAG_SERVER;
 	if (temp) {
 		temp = mode&FLAG_DGRAM;
-		if (temp) 
+		if (temp)
 			server_dgram();
 		else
 			server_stream();
 	}
 	else {
 		temp = mode&FLAG_DGRAM;
-		if (temp) 
+		if (temp)
 			client_dgram();
 		else
 			client();
