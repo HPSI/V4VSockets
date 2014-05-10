@@ -23,11 +23,13 @@
 #define dprintk_info(fmt) printk(KERN_INFO "%s:%d: " fmt, __FUNCTION__, __LINE__)
 #define dprintk_in() dprintk_info("enter\n")
 #define dprintk_out() dprintk_info("exit\n")
+#define dprintk_err(fmt, args...) printk(KERN_INFO"%s:%d: " fmt, __FUNCTION__, __LINE__, args)
 #else
 #define dprintk(args...) 
 #define dprintk_info(fmt) 
 #define dprintk_in()
 #define dprintk_out()
+#define dprintk_err(fmt, args...) printk(KERN_INFO"%s:%d: " fmt, __FUNCTION__, __LINE__, args)
 #endif
 
 /* Compiler specific hacks */

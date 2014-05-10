@@ -369,6 +369,7 @@ static void allocate_pfn_list(struct ring *r)
         r->pfn_list_npages = n;
 
         refresh_pfn_list(r);
+	dprintk("pfn_list_npages = %d\n", n);
 out:
 	dprintk_out();
 }
@@ -413,6 +414,7 @@ static int allocate_ring(struct ring *r, int ring_len)
         }
 
 	dprintk("ring_len:%#lx\n", ring_len);
+	dprintk("pfn_list_npages = %d\n", r->pfn_list_npages);
 	dprintk_out();
         return 0;
  fail:
@@ -432,6 +434,7 @@ static int allocate_ring(struct ring *r, int ring_len)
 static void recover_ring(struct ring *r)
 {
         /* It's all gone horribly wrong */
+        dprintk_err("horribly wrong ... %p\n", r);
         r->ring->rx_ptr = r->ring->tx_ptr;
         /* Xen updates tx_ptr atomically to always be pointing somewhere sensible */
 }
@@ -450,6 +453,7 @@ static int new_ring(struct v4v_private *sponsor, struct v4v_ring_id *pid)
         r = kmalloc(sizeof(struct ring), GFP_KERNEL);
         memset(r, 0, sizeof(struct ring));
 
+        dprintk("desired_ring_size: %#lx\n", sponsor->desired_ring_size);
         ret = allocate_ring(r, sponsor->desired_ring_size);
         if (ret) {
                 kfree(r);
@@ -478,6 +482,7 @@ static int new_ring(struct v4v_private *sponsor, struct v4v_ring_id *pid)
         sponsor->r = r;
         sponsor->state = V4V_STATE_BOUND;
 
+        dprintk("port:%d domain:%d partner:%d\n", id.addr.port, id.addr.domain, id.partner);
         ret = register_ring(r);
         if (ret)
                 goto fail;
@@ -718,11 +723,12 @@ static int
 copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 {
         struct pending_recv *pending;
-        int k, ret = 0;
+        int k, ret = 0, count=0;
 
 	dprintk_in();
         /* Too much queued? Let the ring take the strain */
-        if (atomic_read(&p->pending_recv_count) > MAX_PENDING_RECVS) {
+        if ((count = atomic_read(&p->pending_recv_count)) > MAX_PENDING_RECVS) {
+                dprintk_err("pending recv count %d\n", count);
                 spin_lock(&p->pending_recv_lock);
                 p->full = 1;
                 spin_unlock(&p->pending_recv_lock);
@@ -736,6 +742,7 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
                     sizeof(struct v4v_stream_header) + len, GFP_ATOMIC);
 
         if (!pending) {
+		dprintk_err("out of memory %d\n", len);
                 ret = -1;
                 goto out;
 	}
@@ -744,6 +751,10 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
         pending->data_len = len - sizeof(struct v4v_stream_header);
 
         k = v4v_copy_out(r->ring, &pending->from, NULL, &pending->sh, len, 1);
+	if (k < 0) {
+	    dprintk_err("copy_out returned %d\n", k);
+	    ret = k;
+	}
 
 	dprintk("from:%p, r->ring:%p, len:%#lx\n", &pending->from, r->ring, len);
 	dprintk("k:%d\n", k);
@@ -752,6 +763,9 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
         atomic_inc(&p->pending_recv_count);
         p->full = 0;
         spin_unlock(&p->pending_recv_lock);
+
+	//printk(KERN_INFO "enqueueing a pending recv action\n");
+	//printk(KERN_INFO "from: %p, data_len: %#lx, sh:%p, data:%p\n", &pending->from, pending->data_len, &pending->sh, pending->data);
 
 out:
 	dprintk("ret:%d\n", ret);
@@ -1117,6 +1131,9 @@ acceptor_interrupt(struct v4v_private *p, struct ring *r,
 
         /* Copy the message out */
         ret = copy_into_pending_recv(r, msg_len, p);
+	if (ret < 0) {
+		dprintk_err("copy failed, r:%p, msg_len:%#lx, p:%p, ret: %d\n", r, msg_len, p, ret);
+	}
         wake_up_interruptible_all(&p->readq);
 
 out:
@@ -1136,7 +1153,7 @@ static int listener_interrupt(struct ring *r)
 	dprintk_in();
         msg_len = v4v_copy_out(r->ring, &from, &protocol, &sh, sizeof(sh), 0);  /* Peek the header */
         if (msg_len == -1) {
-		dprintk_info("Peek the header\n");
+		dprintk_err("Peek the header, r->ring:%p, from:%p\n", r->ring, from);
                 recover_ring(r);
                 goto out;
         }
@@ -1144,7 +1161,7 @@ static int listener_interrupt(struct ring *r)
 
         if ((protocol != V4V_PROTO_STREAM) || (msg_len < sizeof(sh))) {
                 /* Wrong protocol bin it */
-		printk(KERN_ERR "%s: Wrong protocol\n",__func__);
+		dprintk_err("Wrong protocol: %#lx\n",protocol);
                 v4v_copy_out(r->ring, NULL, NULL, NULL, 0, 1);
 		goto out;
         }
@@ -1199,6 +1216,9 @@ static int listener_interrupt(struct ring *r)
                         goto out;
                 }
                 ret = copy_into_pending_recv(r, msg_len, r->sponsor);
+		if (ret < 0) {
+			dprintk_err("copy failed, r:%p, msg_len:%#lx, r->sponsor:%p, ret: %d\n", r, msg_len, r->sponsor, ret);
+		}
                 wake_up_interruptible_all(&r->sponsor->readq);
                 goto out;
         }
@@ -1773,10 +1793,12 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                                                    struct pending_recv, node);
 
                         if ((pending->data_len - pending->data_ptr) > len) {
+				//printk(KERN_INFO "len: %#lx, data: %#lx, data_ptr:%p\n", (len), (pending->data_len), (pending->data_ptr));
                                 to_copy = len;
                         } else {
                                 unlink = 1;
                                 to_copy = pending->data_len - pending->data_ptr;
+				//printk(KERN_INFO "unlinked ;-) len: %#lx, data: %#lx, data_ptr:%p\n", (len), (pending->data_len), (pending->data_ptr));
                         }
 
                         if (!access_ok(VERIFY_WRITE, buf, to_copy)) {
@@ -2637,8 +2659,10 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                         id.addr.domain = V4V_DOMID_NONE;
                         id.addr.port = 0;
                         rc = v4v_bind(p, &id);
-                        if (rc)
+                        if (rc) {
+				dprintk_info("paparia\n");
                                 break;
+                                }
                 }
 		/*jo : trace*/
 		dprintk_info("mpainei sto connect tou ioctl");
@@ -2761,42 +2785,56 @@ static unsigned int v4v_poll(struct file *f, poll_table * pt)
         case V4V_PTYPE_DGRAM:
                 switch (p->state) {
                 case V4V_STATE_CONNECTED:
+			dprintk_info("CONNECTED\n");
                 case V4V_STATE_BOUND:
+			dprintk_info("BOUND\n");
                         poll_wait(f, &p->readq, pt);
+			dprintk_info("AFTER WAIT\n");
                         mask |= POLLOUT | POLLWRNORM;
                         if (p->r->ring->tx_ptr != p->r->ring->rx_ptr)
                                 mask |= POLLIN | POLLRDNORM;
                         break;
                 default:
+			dprintk_info("DEFAULT \n");
                         break;
                 }
                 break;
         case V4V_PTYPE_STREAM:
                 switch (p->state) {
                 case V4V_STATE_BOUND:
+			dprintk_info("BOUND\n");
                         break;
                 case V4V_STATE_LISTENING:
+			dprintk_info("LISTENING\n");
                         poll_wait(f, &p->readq, pt);
+			dprintk_info("AFTER WAIT\n");
                         if (!list_empty(&p->pending_recv_list))
                                 mask |= POLLIN | POLLRDNORM;
                         break;
                 case V4V_STATE_ACCEPTED:
+			dprintk_info("ACCEPTED\n");
                 case V4V_STATE_CONNECTED:
+			dprintk_info("CONNECTED\n");
                         poll_wait(f, &p->readq, pt);
+			dprintk_info("after read wait\n");
                         poll_wait(f, &p->writeq, pt);
+			dprintk_info("after write wait\n");
                         if (!p->send_blocked)
                                 mask |= POLLOUT | POLLWRNORM;
                         if (!list_empty(&p->pending_recv_list))
                                 mask |= POLLIN | POLLRDNORM;
                         break;
                 case V4V_STATE_CONNECTING:
+			dprintk_info("CONNECTING\n");
                         poll_wait(f, &p->writeq, pt);
                         break;
                 case V4V_STATE_DISCONNECTED:
+			dprintk_info("DISC\n");
                         mask |= POLLOUT | POLLWRNORM;
                         mask |= POLLIN | POLLRDNORM;
                         break;
                 case V4V_STATE_IDLE:
+			dprintk_info("IDLE\n");
                         break;
                 }
                 break;
