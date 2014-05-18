@@ -49,6 +49,32 @@
 /*
  * Utility functions
  */
+void print_msg_header(struct v4v_ring *r, struct v4v_ring_message_header *mh)
+{   
+	uint32_t len = mh->len;
+	v4v_addr_t *source = &mh->source;
+	uint32_t message_type = mh->message_type;
+	uint8_t *data = mh->data;
+	int i;
+	char *p = kmalloc(r->len + 1, GFP_ATOMIC);
+
+
+	printk(KERN_INFO "len = %#lx\n", len);
+	printk(KERN_INFO "source.domain = %#lx\n", source->domain);
+	printk(KERN_INFO "source.port = %#lx\n", source->port);
+	printk(KERN_INFO "message_type = %#lx\n", message_type);
+	printk(KERN_INFO "data = %p\n", data);
+	memcpy(p, &r->ring[0], 4096);
+	for (i =0; i<4096; i++) {
+	    if ((int)p[i] < 65 || p[i] > 90) {
+		p[i] = 91;
+	    } 
+	}
+	p[4096] = '\0';
+	printk(KERN_INFO "%s\n", p);
+}  
+
+
 static V4V_INLINE uint32_t
 v4v_ring_bytes_to_read (volatile struct v4v_ring *r)
 {
@@ -111,7 +137,8 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
         
         if (btr < len)
         {
-		printk(KERN_ERR "%s: btr < len: %li < %li\n", __func__, (unsigned long)btr, (unsigned long)len);		
+		//print_msg_header(r, mh);
+		printk(KERN_ERR "%s: btr < len: %lu < %lu\n", __func__, (unsigned long)btr, (unsigned long)len);		
 		ret = -1;
 		goto out;
         }
@@ -131,8 +158,10 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
         dprintk_info("after protocol \n");
 
         rxp += sizeof (*mh);
-        if (rxp == r->len)
+        if (rxp == r->len) {
+		printk("BAAAAAAAAAAAAAAAAAAAAM");
                 rxp = 0;
+	}
         len -= sizeof (*mh);
         ret = len;
 
@@ -152,6 +181,7 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
                         }
 
                         rxp = 0;
+                        //rxp = sizeof(v4v_ring_t);
                         len -= bte;
                         t = 0;
 			dprintk("t<bte rxp = t = 0, len = %li\n", (unsigned long)len);
@@ -163,6 +193,7 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
                                 memcpy (buf, (void *) &r->ring[rxp], bte);
                                 buf += bte;
                         }
+                        //rxp = sizeof(v4v_ring_t);
                         rxp = 0;
                         len -= bte;
                         t -= bte;
@@ -173,25 +204,27 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
         if (buf && t) 
                 memcpy (buf, (void *) &r->ring[rxp], (t < len) ? t : len);
 	
-	dprintk("len before round up len = %li, rxp = %li, r->len = %li, round = %li", (unsigned long)len, (unsigned long)rxp, (unsigned long)r->len, V4V_ROUNDUP (len));
+	//printk("len before round up len = %li, rxp = %li, r->len = %li, round loss = %li", (unsigned long)len, (unsigned long)rxp, (unsigned long)r->len, V4V_ROUNDUP (len) - len);
         
 	//rxp += V4V_ROUNDUP (len);
 	/*jo magic*/
 	rxp += len;
 	/*jo magic end*/
-        if (rxp == r->len)
+        if (rxp == r->len) {
+		printk("BAAAAAAAAAAAAAAAAAAAAM");
                 rxp = 0;
+	}
 
-	dprintk("after round up rxp = %li, rx = %li\n", (unsigned long)rxp, (unsigned long)r->rx_ptr);
+	//printk("after round up rxp = %li, rx = %li\n", (unsigned long)rxp, (unsigned long)r->rx_ptr);
         mb ();
 
         if (consume){
-		dprintk("%s: In consume rxp = %li\n", __func__, (unsigned long)rxp); 
+		//printk("%s: In consume rxp = %li\n", __func__, (unsigned long)rxp); 
 		/*!jo magic*/
 	        //r->rx_ptr = rxp;
 		r->rx_ptr = V4V_ROUNDUP(rxp);
 		/*jo magic end*/
-		dprintk("%s: In consume rx = %li\n", __func__, (unsigned long)r->rx_ptr);
+		//printk("%s: In consume rx = %li (ROUNDUP loss: %li\n", __func__, (unsigned long)r->rx_ptr, V4V_ROUNDUP(rxp) - rxp);
 	}
 
         dprintk("buf is: %#lx\n", (unsigned long) (buf ? buf : 0));
@@ -274,6 +307,7 @@ v4v_copy_out_offset(struct v4v_ring *r, struct v4v_addr *from,
 
         len = mh->len;
         if (btr < len) {
+		printk("ERROR in btr < len\n");
                 ret = -1;
                 goto out;
 	}
@@ -344,5 +378,6 @@ out:
 	dprintk_out();
         return ret;
 }
+
 
 #endif /* !__V4V_UTILS_H__ */

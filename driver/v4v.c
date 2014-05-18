@@ -223,6 +223,9 @@ H_v4v_sendv(v4v_addr_t * s, v4v_addr_t * d, const v4v_iov_t * iovs,
                                  protocol);
 
 	dprintk("%s: ret: %d\n", __func__, ret);
+	if (ret < 0) {
+		dprintk_err("hypercall_fault, ret = %d\n", ret);
+	}
 	dprintk_out();
 	return ret;
 }
@@ -245,7 +248,7 @@ H_v4v_send(v4v_addr_t * s, v4v_addr_t * d, const void *buf, uint32_t len,
 	iovs->iov_len = len;
 	ret = H_v4v_sendv(s, d, iovs, 1, protocol);
         //return HYPERVISOR_v4v_op(V4VOP_send, &addr, (void *)buf, len, protocol);
-	printk(KERN_INFO "%s:ret = %d", __func__, ret);
+	//printk(KERN_INFO "%s:ret = %d", __func__, ret);
 
 	return ret;
 }
@@ -728,6 +731,7 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 	dprintk_in();
         /* Too much queued? Let the ring take the strain */
         if ((count = atomic_read(&p->pending_recv_count)) > MAX_PENDING_RECVS) {
+                printk(KERN_ERR "pending recv count %d\n", count);
                 dprintk_err("pending recv count %d\n", count);
                 spin_lock(&p->pending_recv_lock);
                 p->full = 1;
@@ -742,7 +746,7 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
                     sizeof(struct v4v_stream_header) + len, GFP_ATOMIC);
 
         if (!pending) {
-		dprintk_err("out of memory %d\n", len);
+		printk(KERN_ERR "out of memory %d\n", len);
                 ret = -1;
                 goto out;
 	}
@@ -752,7 +756,7 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 
         k = v4v_copy_out(r->ring, &pending->from, NULL, &pending->sh, len, 1);
 	if (k < 0) {
-	    dprintk_err("copy_out returned %d\n", k);
+	    printk(KERN_ERR "copy_out returned %d\n", k);
 	    ret = k;
 	}
 
@@ -1510,6 +1514,7 @@ v4v_stream_sendvto_from_sponsor(struct v4v_private *p,
 {
         size_t ret = 0, ts_ret;
 
+
         switch (p->state) {
         case V4V_STATE_CONNECTING:
                 return -ENOTCONN;
@@ -1822,7 +1827,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
 				dprintk(" in error copy_to_user, %d", ret);
 				ret2 = copy_to_user(buf + to_copy - ret, pending->data + pending->data_ptr + to_copy - ret, ret);
 				if (ret2) {
-					dprintk("fatal... %d\n", ret2);
+					printk(KERN_INFO "%s: fatal... %d\n", __func__, ret2);
 				
 					spin_unlock_irqrestore(&p->pending_recv_lock, flags);
 					ret = -EFAULT;
@@ -1897,7 +1902,7 @@ v4v_send_stream(struct v4v_private *p, const void *_buf, int len, int nonblock)
                 struct v4v_stream_header sh;
                 v4v_iov_t iovs[2];
 
-                to_send = len > write_lump ? write_lump : len;
+                to_send = len;// > write_lump ? write_lump : len;
                 sh.flags = 0;
                 sh.conid = p->conid;
 
@@ -2290,12 +2295,12 @@ v4v_sendto(struct v4v_private * p, const void *buf, size_t len, int flags,
 
         dprintk_in();
         if (!access_ok(VERIFY_READ, buf, len)) {
-		dprintk_info("Access not OK");
+		dprintk_err("Access not OK %p\n", buf);
                 ret = -EFAULT;
 		goto out;
 	}
         if (!access_ok(VERIFY_READ, addr, len)) {
-		dprintk_info("Access not OK");
+		dprintk_err("Access not OK %p\n", buf);
                 ret = -EFAULT;
 		goto out;
 	}
@@ -2401,12 +2406,12 @@ v4v_recvfrom(struct v4v_private * p, void *buf, size_t len, int flags,
                  (unsigned long) addr, (unsigned long) nonblock);
 
         if (!access_ok(VERIFY_WRITE, buf, len)) {
-		dprintk_info("Access not OK");
+		dprintk_err("Access not OK %p\n", buf);
                 ret = -EFAULT;
                 goto out;
 	}
         if ((addr) && (!access_ok(VERIFY_WRITE, addr, sizeof(v4v_addr_t)))) {
-		dprintk_info("addr && Access not OK");
+		dprintk_err("addr && Access not OK :%p\n", buf);
                 ret = -EFAULT;
                 goto out;
 	}
@@ -2613,7 +2618,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
         switch (cmd) {
         case V4VIOCSETRINGSIZE:
                 if (!access_ok(VERIFY_READ, arg, sizeof(uint32_t))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx\n", arg);
 			rc = -EFAULT;
 			goto out;
 		}
@@ -2621,7 +2626,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 break;
         case V4VIOCBIND:
                 if (!access_ok(VERIFY_READ, arg, sizeof(struct v4v_ring_id))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx\n", arg);
 			rc = -EFAULT;
 			goto out;
 		}
@@ -2629,7 +2634,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 break;
         case V4VIOCGETSOCKNAME:
                 if (!access_ok(VERIFY_WRITE, arg, sizeof(struct v4v_ring_id))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
 			rc = -EFAULT;
 			goto out;
 		}
@@ -2637,7 +2642,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 break;
         case V4VIOCGETPEERNAME:
                 if (!access_ok(VERIFY_WRITE, arg, sizeof(v4v_addr_t))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
 			rc = -EFAULT;
 			goto out;
 		}
@@ -2646,7 +2651,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 break;
         case V4VIOCCONNECT:
                 if (!access_ok(VERIFY_READ, arg, sizeof(v4v_addr_t))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
 			rc = -EFAULT;
 			goto out;
 		}
@@ -2672,7 +2677,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 {
                         unsigned long flags;
                         if (!access_ok(VERIFY_WRITE, arg, sizeof(int))) {
-				dprintk_info("Access not ok");
+				dprintk_err("Access not ok %#lx", arg);
 				rc = -EFAULT;
 				goto out;
 			}
@@ -2689,7 +2694,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 break;
         case V4VIOCACCEPT:
                 if (!access_ok(VERIFY_WRITE, arg, sizeof(v4v_addr_t))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
                         rc = -EFAULT;
                         goto out;
                 }
@@ -2697,7 +2702,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 break;
         case V4VIOCSEND:
                 if (!access_ok(VERIFY_READ, arg, sizeof(struct v4v_dev))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
                         rc = -EFAULT;
                         goto out;
                 }
@@ -2710,7 +2715,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 break;
         case V4VIOCRECV:
                 if (!access_ok(VERIFY_READ, arg, sizeof(struct v4v_dev))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
                         rc = -EFAULT;
                         goto out;
                 }
@@ -2723,7 +2728,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
         case V4VIOCVIPTABLESADD:
                 if (!access_ok
                     (VERIFY_READ, arg, sizeof(struct v4v_viptables_rule_pos))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
                         rc = -EFAULT;
                         goto out;
                 }
@@ -2737,7 +2742,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
         case V4VIOCVIPTABLESDEL:
                 if (!access_ok
                     (VERIFY_READ, arg, sizeof(struct v4v_viptables_rule_pos))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
                         rc = -EFAULT;
                         goto out;
                 }
@@ -2751,7 +2756,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
         case V4VIOCVIPTABLESLIST:
                 if (!access_ok
                     (VERIFY_READ, arg, sizeof(struct v4vtables_list))) {
-			dprintk_info("Access not ok");
+			dprintk_err("Access not ok %#lx", arg);
                         rc = -EFAULT;
                         goto out;
                 }
@@ -3080,6 +3085,7 @@ static void __exit v4v_cleanup(void)
         platform_driver_unregister(&v4v_driver);
 	dprintk_out();
 }
+
 
 module_init(v4v_init);
 module_exit(v4v_cleanup);
