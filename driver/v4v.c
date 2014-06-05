@@ -68,7 +68,7 @@
 
 unsigned long start = 0, stop = 0, total=0;
 #define DEFAULT_RING_SIZE \
-    (V4V_ROUNDUP((((PAGE_SIZE)*32) - sizeof(v4v_ring_t)-V4V_ROUNDUP(1))))
+    (V4V_ROUNDUP((((PAGE_SIZE)*1024) - sizeof(v4v_ring_t)-V4V_ROUNDUP(1))))
 
 /* The type of a ring*/
 typedef enum {
@@ -176,7 +176,7 @@ struct pending_xmit {
         uint8_t data[0];
 };
 
-#define MAX_PENDING_RECVS        16
+#define MAX_PENDING_RECVS        1024
 
 /* Hypercalls */
 
@@ -190,18 +190,21 @@ HYPERVISOR_v4v_op(int cmd, void *arg1, void *arg2,
 static int v4v_info(v4v_info_t *info)
 {
         (void)(*(volatile int*)info);
+	dprintk_info("Going to issue V4V_INFO hypercall\n");
         return HYPERVISOR_v4v_op (V4VOP_info, info, NULL, 0, 0);
 }
 
 static int H_v4v_register_ring(v4v_ring_t * r, v4v_pfn_t * l, size_t npages)
 {
         (void)(*(volatile int *)r);
-        return HYPERVISOR_v4v_op(V4VOP_register_ring, r, l, npages, 0);
+ 	dprintk_info("Going to issue REGISTER hypercall\n");       
+	return HYPERVISOR_v4v_op(V4VOP_register_ring, r, l, npages, 0);
 }
 
 static int H_v4v_unregister_ring(v4v_ring_t * r)
 {
         (void)(*(volatile int *)r);
+	dprintk_info("Going to issue UNREGISTER hypercall\n");
         return HYPERVISOR_v4v_op(V4VOP_unregister_ring, r, NULL, 0, 0);
 }
 
@@ -212,18 +215,29 @@ H_v4v_sendv(v4v_addr_t * s, v4v_addr_t * d, const v4v_iov_t * iovs,
 {
         v4v_send_addr_t addr;
 	int ret;
+	void *buf;
 
 	dprintk_in();
 
-	dprintk("source port, domain: %#lx, %#lx, dest port, domain: %#lx, %#lx protocol: %#lx\n",
-	         (unsigned long) s->port, s->domain, (unsigned long) d->port, d->domain, protocol);
+	dprintk("source port:%i, domain:%i, dest port:%i, domain: %i protocol: %#x\n",
+	         s->port, s->domain, d->port, d->domain, protocol);
         addr.src = *s;
-        addr.dst = *d;
+        
+	addr.dst = *d;
+	dprintk_info("Going to issue SEND hypercall\n");
         ret = HYPERVISOR_v4v_op(V4VOP_sendv, &addr, (void *)iovs, niov,
                                  protocol);
+#ifdef V4V_DEBUG
+	if (niov > 1) {
+	    v4v_iov_t * iov = &iovs[1];
+	    buf = (void*)iov->iov_base;
+	    //printk(KERN_INFO "%s: buf:%p, len:%#lx\n", __func__, buf, iov->iov_len);
+	    //v4v_hexdump(buf, iov->iov_len);
+	}
+#endif
 
 	dprintk("%s: ret: %d\n", __func__, ret);
-	if (ret < 0) {
+	if (ret < 0 && ret != -EAGAIN) {
 		dprintk_err("hypercall_fault, ret = %d\n", ret);
 	}
 	dprintk_out();
@@ -236,17 +250,17 @@ H_v4v_send(v4v_addr_t * s, v4v_addr_t * d, const void *buf, uint32_t len,
 {
         v4v_send_addr_t addr;
 	int ret;
-	char *temp;
 	v4v_iov_t *iovs = kmalloc(sizeof(v4v_iov_t), GFP_KERNEL);
 
         addr.src = *s;
         addr.dst = *d;
 
-	temp = (char*)buf;
 	/*jo : modification*/
 	iovs->iov_base = (uintptr_t)buf;
 	iovs->iov_len = len;
 	ret = H_v4v_sendv(s, d, iovs, 1, protocol);
+	//printk(KERN_INFO "%s: buf:%p, len:%#lx\n", __func__, buf, iovs->iov_len);
+	//v4v_hexdump((char*)iovs->iov_base, iovs->iov_len);
         //return HYPERVISOR_v4v_op(V4VOP_send, &addr, (void *)buf, len, protocol);
 	//printk(KERN_INFO "%s:ret = %d", __func__, ret);
 
@@ -255,12 +269,13 @@ H_v4v_send(v4v_addr_t * s, v4v_addr_t * d, const void *buf, uint32_t len,
 
 static int H_v4v_notify(v4v_ring_data_t * rd)
 {
+	dprintk_info("Going to issue NOTIFY hypercall\n");
         return HYPERVISOR_v4v_op(V4VOP_notify, rd, NULL, 0, 0);
 }
 
 static int H_v4v_viptables_add(v4vtables_rule_t * rule, int position)
 {
-        return HYPERVISOR_v4v_op(V4VOP_tables_add, rule, NULL,
+	return HYPERVISOR_v4v_op(V4VOP_tables_add, rule, NULL,
                                  position, 0);
 }
 
@@ -275,6 +290,66 @@ static int H_v4v_viptables_list(struct v4vtables_list *list)
         return HYPERVISOR_v4v_op(V4VOP_tables_list, list, NULL, 0, 0);
 }
 
+#ifdef V4V_DEBUG
+static char * v4v_ioctl2text(unsigned int cmd)
+{
+        char *rc = "BLAH";
+
+        dprintk_in();
+
+        if (_IOC_TYPE(cmd) != V4V_TYPE) {
+                goto out;
+        }
+
+        switch (cmd) {
+        case V4VIOCSETRINGSIZE:
+		rc = "V4VIOCSETRINGSIZE";
+                break;
+        case V4VIOCBIND:
+		rc = "V4VIOCBIND";
+                break;
+        case V4VIOCGETSOCKNAME:
+		rc = "V4VIOCGETSOCKNAME";
+                break;
+        case V4VIOCGETPEERNAME:
+		rc = "V4VIOCGETPEERNAME";
+                break;
+        case V4VIOCCONNECT:
+		rc = "V4VIOCCONNECT";
+                break;
+        case V4VIOCGETCONNECTERR:
+		rc = "V4VIOCGETCONNECTERR";
+                break;
+        case V4VIOCLISTEN:
+		rc = "V4VIOCLISTEN";
+                break;
+        case V4VIOCACCEPT:
+		rc = "V4VIOCACCEPT";
+                break;
+        case V4VIOCSEND:
+		rc = "V4VIOCSEND";
+                break;
+        case V4VIOCRECV:
+		rc = "V4VIOCRECV";
+                break;
+        case V4VIOCVIPTABLESADD:
+		rc = "V4VIOCVIPTABLESADD";
+                break;
+        case V4VIOCVIPTABLESDEL:
+		rc = "V4VIOCVIPTABLESDEL";
+                break;
+        case V4VIOCVIPTABLESLIST:
+		rc = "V4VIOCVIPTABLESLIST";
+                break;
+        default:
+		break;
+        }
+
+out:
+        dprintk_out();
+        return rc;
+}
+#endif
 /* Port/Ring uniqueness */
 
 /* Need to hold write lock for all of these */
@@ -362,7 +437,7 @@ static void refresh_pfn_list(struct ring *r)
 
 static void allocate_pfn_list(struct ring *r)
 {
-        int n = (r->ring->len + PAGE_SIZE - 1) >> PAGE_SHIFT;
+        int n = (r->ring->len + sizeof(v4v_ring_t) + PAGE_SIZE - 1) >> PAGE_SHIFT;
         int len = sizeof(v4v_pfn_t) * n;
 
 	dprintk_in();
@@ -416,8 +491,8 @@ static int allocate_ring(struct ring *r, int ring_len)
                 goto fail;
         }
 
-	dprintk("ring_len:%#lx\n", ring_len);
-	dprintk("pfn_list_npages = %d\n", r->pfn_list_npages);
+	dprintk("ring_len:%#x\n", ring_len);
+	dprintk("pfn_list_npages = %#lx\n", r->pfn_list_npages);
 	dprintk_out();
         return 0;
  fail:
@@ -437,7 +512,7 @@ static int allocate_ring(struct ring *r, int ring_len)
 static void recover_ring(struct ring *r)
 {
         /* It's all gone horribly wrong */
-        dprintk_err("horribly wrong ... %p\n", r);
+        dprintk_err("horribly wrong ... %p, rx_ptr:%#x, tx_ptr:%#x\n", r->ring, r->ring->rx_ptr, r->ring->tx_ptr);
         r->ring->rx_ptr = r->ring->tx_ptr;
         /* Xen updates tx_ptr atomically to always be pointing somewhere sensible */
 }
@@ -450,13 +525,14 @@ static int new_ring(struct v4v_private *sponsor, struct v4v_ring_id *pid)
         int ret;
         unsigned long flags;
 
+	dprintk_in();
         if (id.addr.domain != V4V_DOMID_NONE)
                 return -EINVAL;
-
+	
         r = kmalloc(sizeof(struct ring), GFP_KERNEL);
         memset(r, 0, sizeof(struct ring));
 
-        dprintk("desired_ring_size: %#lx\n", sponsor->desired_ring_size);
+        dprintk("desired_ring_size: %#x\n", sponsor->desired_ring_size);
         ret = allocate_ring(r, sponsor->desired_ring_size);
         if (ret) {
                 kfree(r);
@@ -492,6 +568,7 @@ static int new_ring(struct v4v_private *sponsor, struct v4v_ring_id *pid)
 
         list_add(&r->node, &ring_list);
         write_unlock_irqrestore(&list_lock, flags);
+	dprintk_out();
         return 0;
 
  fail:
@@ -581,7 +658,8 @@ xmit_queue_wakeup_private(struct v4v_ring_id *from,
                           uint32_t conid, v4v_addr_t * to, int len, int delete)
 {
         struct pending_xmit *p;
-
+	
+	dprintk_in();
         list_for_each_entry(p, &pending_xmit_list, node) {
                 if (p->type != V4V_PENDING_XMIT_WAITQ_MATCH_PRIVATES)
                         continue;
@@ -617,6 +695,7 @@ xmit_queue_wakeup_private(struct v4v_ring_id *from,
 
         atomic_inc(&pending_xmit_count);
         list_add_tail(&p->node, &pending_xmit_list);
+	dprintk_out();
 }
 
 /* Caller must hold pending_xmit_lock */
@@ -626,6 +705,7 @@ xmit_queue_wakeup_sponsor(struct v4v_ring_id *from, v4v_addr_t * to,
 {
         struct pending_xmit *p;
 
+	dprintk_in();
         list_for_each_entry(p, &pending_xmit_list, node) {
                 if (p->type != V4V_PENDING_XMIT_WAITQ_MATCH_SPONSOR)
                         continue;
@@ -656,6 +736,7 @@ xmit_queue_wakeup_sponsor(struct v4v_ring_id *from, v4v_addr_t * to,
         p->len = len;
         atomic_inc(&pending_xmit_count);
         list_add_tail(&p->node, &pending_xmit_list);
+	dprintk_out();
 }
 
 static int
@@ -665,7 +746,11 @@ xmit_queue_inline(struct v4v_ring_id *from, v4v_addr_t * to,
         ssize_t ret;
         unsigned long flags;
         struct pending_xmit *p;
-	v4v_iov_t *iovs = kmalloc(sizeof(v4v_iov_t), GFP_KERNEL);
+	v4v_iov_t *iovs;
+
+	dprintk_in();
+
+	iovs = kmalloc(sizeof(v4v_iov_t), GFP_KERNEL);
 
         spin_lock_irqsave(&pending_xmit_lock, flags);
 
@@ -682,6 +767,7 @@ xmit_queue_inline(struct v4v_ring_id *from, v4v_addr_t * to,
         }
 
         p = kmalloc(sizeof(struct pending_xmit) + len, GFP_ATOMIC);
+        //p = kmalloc(sizeof(struct pending_xmit), GFP_ATOMIC);
         if (!p) {
                 spin_unlock_irqrestore(&pending_xmit_lock, flags);
                 printk(KERN_ERR
@@ -697,13 +783,17 @@ xmit_queue_inline(struct v4v_ring_id *from, v4v_addr_t * to,
         p->len = len;
         p->protocol = protocol;
 
-        if (len)
+        if (len) {
+                //*(char*)p->data = buf;
+		printk(KERN_INFO "p->data:%p\n", p->data);
                 memcpy(p->data, buf, len);
+	}
 
         list_add_tail(&p->node, &pending_xmit_list);
         atomic_inc(&pending_xmit_count);
         spin_unlock_irqrestore(&pending_xmit_lock, flags);
 
+	dprintk_out();
         return len;
 }
 
@@ -711,13 +801,15 @@ static void
 xmit_queue_rst_to(struct v4v_ring_id *from, uint32_t conid, v4v_addr_t * to)
 {
         struct v4v_stream_header sh;
-
+	
+	dprintk_in();
         if (!to)
                 return;
 
         sh.conid = conid;
         sh.flags = V4V_SHF_RST;
         xmit_queue_inline(from, to, &sh, sizeof(sh), V4V_PROTO_STREAM);
+	dprintk_out();
 }
 
 /* RX */
@@ -731,7 +823,6 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 	dprintk_in();
         /* Too much queued? Let the ring take the strain */
         if ((count = atomic_read(&p->pending_recv_count)) > MAX_PENDING_RECVS) {
-                printk(KERN_ERR "pending recv count %d\n", count);
                 dprintk_err("pending recv count %d\n", count);
                 spin_lock(&p->pending_recv_lock);
                 p->full = 1;
@@ -740,7 +831,8 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
                 ret = -1;
                 goto out;
         }
-
+	
+	/*afairei to sh gt to len to periexei, afou otan klhthei dn exei katharistei akoma to sh*/
         pending =
             kmalloc(sizeof(struct pending_recv) -
                     sizeof(struct v4v_stream_header) + len, GFP_ATOMIC);
@@ -752,6 +844,7 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 	}
 
         pending->data_ptr = 0;
+	/*to pragmatiko data_size xwris headers*/
         pending->data_len = len - sizeof(struct v4v_stream_header);
 
         k = v4v_copy_out(r->ring, &pending->from, NULL, &pending->sh, len, 1);
@@ -760,8 +853,10 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 	    ret = k;
 	}
 
-	dprintk("from:%p, r->ring:%p, len:%#lx\n", &pending->from, r->ring, len);
+	dprintk("from:%p, r->ring:%p, len:%#x, buf:%p\n", &pending->from, r->ring, len, &pending->sh);
 	dprintk("k:%d\n", k);
+	//corrupt!!!
+	//v4v_hexdump(&pending->sh, len);
         spin_lock(&p->pending_recv_lock);
         list_add_tail(&pending->node, &p->pending_recv_list);
         atomic_inc(&p->pending_recv_count);
@@ -959,7 +1054,7 @@ connector_state_machine(struct v4v_private *p, struct v4v_stream_header *sh)
 {
 	/*jo : trace*/
 	int ret = 0;
-	dprintk_info("In connector state machine\n");
+	dprintk_in();
         if (sh->flags & V4V_SHF_ACK) {
                 switch (p->state) {
                 case V4V_STATE_CONNECTING:
@@ -1008,7 +1103,7 @@ connector_state_machine(struct v4v_private *p, struct v4v_stream_header *sh)
                 }
         }
 out:
-	dprintk("EXITING CONNECTOR STATE MACHINE %d \n", ret);
+	dprintk_out();
         return ret;
 }
 
@@ -1045,9 +1140,11 @@ static int connector_interrupt(struct ring *r)
         }
 
 	dprintk_info("Before Peek the header\n");
+	/*koitaei ton header xwris na ton kanei consume*/
+	/*epistrefei to len xwris to mh (se ks)*/
         msg_len = v4v_copy_out(r->ring, &from, &protocol, &sh, sizeof(sh), 0);  /* Peek the header */
         if (msg_len == -1) {
-		dprintk_info("Peek the header\n");
+		dprintk_err("Peek the header: rx_ptr: %#lx, tx_ptr: %#lx\n", r->ring->rx_ptr, r->ring->tx_ptr);
                 recover_ring(r);
                 goto out;
         }
@@ -1082,9 +1179,10 @@ static int connector_interrupt(struct ring *r)
         }
 
         /* Any messages to eat? */
-        dprintk("%s: flags = %#lx\n",__func__,  sh.flags);
+        dprintk("%s: flags = %#x\n",__func__,  sh.flags);
         if (sh.flags & (V4V_SHF_ACK | V4V_SHF_RST)) {
 		dprintk_info("Any messages to eat\n");
+		/*trwei ton sh se periptwsh pou einai ACK*/
                 msg_len =
                     v4v_copy_out(r->ring, &from, &protocol, &sh, sizeof(sh), 1);
                 if (msg_len == sizeof(sh)) {
@@ -1099,6 +1197,11 @@ static int connector_interrupt(struct ring *r)
         }
         //FIXME set a flag to say wake up the userland process next time, and do that rather than copy
 	dprintk_info("FIXME\n");
+	/*edw ftanei otan thelei na steilei pragmatika data 
+	* me to wake_up_interruptible ksekollaei h recv_stream
+	*to munhma proxwraei sthn copy_into_pending_recv 
+	*mazi me to sh
+	*/
         ret = copy_into_pending_recv(r, msg_len, r->sponsor);
         wake_up_interruptible_all(&r->sponsor->readq);
 
@@ -1107,6 +1210,7 @@ out:
         return ret;
 }
 
+/*o acceptor_interrupt kaleitai mono mesa ap ton listener*/
 static int
 acceptor_interrupt(struct v4v_private *p, struct ring *r,
                    struct v4v_stream_header *sh, ssize_t msg_len)
@@ -1134,6 +1238,7 @@ acceptor_interrupt(struct v4v_private *p, struct ring *r,
         }
 
         /* Copy the message out */
+	/*edw logika einai to recieve gia ton server*/
         ret = copy_into_pending_recv(r, msg_len, p);
 	if (ret < 0) {
 		dprintk_err("copy failed, r:%p, msg_len:%#lx, p:%p, ret: %d\n", r, msg_len, p, ret);
@@ -1157,15 +1262,16 @@ static int listener_interrupt(struct ring *r)
 	dprintk_in();
         msg_len = v4v_copy_out(r->ring, &from, &protocol, &sh, sizeof(sh), 0);  /* Peek the header */
         if (msg_len == -1) {
-		dprintk_err("Peek the header, r->ring:%p, from:%p\n", r->ring, from);
+		//dprintk_err("Peek the header, r->ring:%p, from=(port:%#x, domain:%#x)\n", r->ring, from.port, from.domain);
+		dprintk_err("Peek the header: rx_ptr: %#lx, tx_ptr: %#lx\n", r->ring->rx_ptr, r->ring->tx_ptr);
                 recover_ring(r);
                 goto out;
         }
-	dprintk("%s: msg_len = %d\n", __func__, msg_len);
+	dprintk("%s: msg_len = %#lx\n", __func__, msg_len);
 
         if ((protocol != V4V_PROTO_STREAM) || (msg_len < sizeof(sh))) {
                 /* Wrong protocol bin it */
-		dprintk_err("Wrong protocol: %#lx\n",protocol);
+		dprintk_err("Wrong protocol: %#x\n",protocol);
                 v4v_copy_out(r->ring, NULL, NULL, NULL, 0, 1);
 		goto out;
         }
@@ -1188,8 +1294,8 @@ static int listener_interrupt(struct ring *r)
                  * Hence we must make sure to evict the SYN header from the pending queue
                  * before it gets picked up by v4v_accept().
                  */
-		dprintk("%s: Consume it\n", __func__);
                 struct pending_recv *pending, *t;
+		dprintk("%s: Consume it\n", __func__);
 
                 spin_lock(&r->sponsor->pending_recv_lock);
                 list_for_each_entry_safe(pending, t,
@@ -1219,6 +1325,7 @@ static int listener_interrupt(struct ring *r)
                                            sizeof(sh), 1);
                         goto out;
                 }
+		dprintk_info("Edw einai gia to SYN???????\n");
                 ret = copy_into_pending_recv(r, msg_len, r->sponsor);
 		if (ret < 0) {
 			dprintk_err("copy failed, r:%p, msg_len:%#lx, r->sponsor:%p, ret: %d\n", r, msg_len, r->sponsor, ret);
@@ -1289,10 +1396,12 @@ static irqreturn_t v4v_interrupt(int irq, void *dev_id)
         unsigned long flags;
 
 	/*jo : trace*/
+	dprintk_in();
         spin_lock_irqsave(&interrupt_lock, flags);
         v4v_interrupt_rx();
         v4v_notify();
         spin_unlock_irqrestore(&interrupt_lock, flags);
+	dprintk_out();
 
         return IRQ_HANDLED;
 }
@@ -1300,11 +1409,12 @@ static irqreturn_t v4v_interrupt(int irq, void *dev_id)
 static void v4v_fake_irq(void)
 {
         unsigned long flags;
-
+	dprintk_in();
         spin_lock_irqsave(&interrupt_lock, flags);
         v4v_interrupt_rx();
         v4v_null_notify();
         spin_unlock_irqrestore(&interrupt_lock, flags);
+	dprintk_out();
 }
 
 /* Filesystem gunge */
@@ -1378,8 +1488,9 @@ v4v_try_send_sponsor(struct v4v_private *p,
         size_t ret;
         unsigned long flags;
 
+	dprintk_in();
         ret = H_v4v_send(&p->r->ring->id.addr, dest, buf, len, protocol);
-	dprintk("%s : ret = %d\n", __func__, ret);
+	dprintk("%s : ret = %#lx\n", __func__, ret);
         spin_lock_irqsave(&pending_xmit_lock, flags);
         if (ret == -EAGAIN) {
                 /* Add pending xmit */
@@ -1393,7 +1504,7 @@ v4v_try_send_sponsor(struct v4v_private *p,
         }
 
         spin_unlock_irqrestore(&pending_xmit_lock, flags);
-
+	dprintk_out();
         return ret;
 }
 
@@ -1405,6 +1516,8 @@ v4v_try_sendv_sponsor(struct v4v_private *p,
 {
         size_t ret;
         unsigned long flags;
+
+	dprintk_in();
 
         ret = H_v4v_sendv(&p->r->ring->id.addr, dest, iovs, niov, protocol);
 
@@ -1420,6 +1533,8 @@ v4v_try_sendv_sponsor(struct v4v_private *p,
                 p->send_blocked = 0;
         }
         spin_unlock_irqrestore(&pending_xmit_lock, flags);
+
+	dprintk_out();
 
         return ret;
 }
@@ -1437,6 +1552,8 @@ v4v_try_sendv_privates(struct v4v_private *p,
         size_t ret;
         unsigned long flags;
 
+	dprintk_in();
+
         ret = H_v4v_sendv(&p->r->ring->id.addr, dest, iovs, niov, protocol);
 
         spin_lock_irqsave(&pending_xmit_lock, flags);
@@ -1453,6 +1570,8 @@ v4v_try_sendv_privates(struct v4v_private *p,
         }
         spin_unlock_irqrestore(&pending_xmit_lock, flags);
 
+	dprintk_out();
+
         return ret;
 }
 
@@ -1463,23 +1582,32 @@ v4v_sendto_from_sponsor(struct v4v_private *p,
 {
         size_t ret = 0, ts_ret;
 
+	dprintk_in();
+
         switch (p->state) {
         case V4V_STATE_CONNECTING:
                 ret = -ENOTCONN;
+		goto out;
                 break;
         case V4V_STATE_DISCONNECTED:
                 ret = -EPIPE;
+		goto out;
                 break;
         case V4V_STATE_BOUND:
         case V4V_STATE_CONNECTED:
                 break;
         default:
                 ret = -EINVAL;
+		goto out;
         }
 
-        if (len > (p->r->ring->len - sizeof(struct v4v_ring_message_header)))
-                return -EMSGSIZE;
-	dprintk("%s len = %d, ring_len = %d, mh = %d\n", __func__, len, p->r->ring->len, sizeof(struct v4v_ring_message_header));
+        if (len > (p->r->ring->len - sizeof(struct v4v_ring_message_header))) {
+		dprintk_err("message size: %#lx vs. %#lx\n", len, p->r->ring->len - sizeof(struct v4v_ring_message_header));
+                len = p->r->ring->len - sizeof(struct v4v_ring_message_header);
+                //ret = -EMSGSIZE;
+		//goto out;
+	}
+	dprintk("%s len = %#lx, ring_len = %#x, mh = %#lx\n", __func__, len, p->r->ring->len, sizeof(struct v4v_ring_message_header));
         if (ret)
                 return ret;
 
@@ -1502,6 +1630,9 @@ v4v_sendto_from_sponsor(struct v4v_private *p,
                                           buf, len, protocol)) != -EAGAIN));
         if (ret)
                 ret = ts_ret;
+	
+out:
+	dprintk_out();
 
         return ret;
 }
@@ -1514,28 +1645,36 @@ v4v_stream_sendvto_from_sponsor(struct v4v_private *p,
 {
         size_t ret = 0, ts_ret;
 
-
+	dprintk_in();
         switch (p->state) {
         case V4V_STATE_CONNECTING:
-                return -ENOTCONN;
+                ret = -ENOTCONN;
+		goto out;
         case V4V_STATE_DISCONNECTED:
-                return -EPIPE;
+                ret = -EPIPE;
+		goto out;
         case V4V_STATE_BOUND:
         case V4V_STATE_CONNECTED:
                 break;
         default:
-                return -EINVAL;
+                ret = -EINVAL;
+		goto out;
         }
 
-        if (len > (p->r->ring->len - sizeof(struct v4v_ring_message_header)))
-                return -EMSGSIZE;
+        if (len > (p->r->ring->len - sizeof(struct v4v_ring_message_header))) {
+		dprintk_err("message size: %#lx vs. %#lx\n", len, p->r->ring->len - sizeof(struct v4v_ring_message_header));
+                len = p->r->ring->len - sizeof(struct v4v_ring_message_header);
+                //ret = -EMSGSIZE;
+		//goto out;
+	}
 
         if (ret)
-                return ret;
+		goto out;
 
         if (nonblock) {
-                return H_v4v_sendv(&p->r->ring->id.addr, dest, iovs, niov,
+                ret = H_v4v_sendv(&p->r->ring->id.addr, dest, iovs, niov,
                                    protocol);
+		goto out;
         }
         /*
          * I happen to know that wait_event_interruptible will never
@@ -1555,6 +1694,8 @@ v4v_stream_sendvto_from_sponsor(struct v4v_private *p,
         if (ret == 0)
                 ret = ts_ret;
 
+out:
+	dprintk_out();
         return ret;
 }
 static ssize_t
@@ -1564,6 +1705,8 @@ v4v_stream_sendvto_from_private(struct v4v_private *p,
                                 v4v_addr_t * dest, uint32_t protocol)
 {
         size_t ret = 0, ts_ret;
+
+	dprintk_in();
 
         switch (p->state) {
         case V4V_STATE_DISCONNECTED:
@@ -1601,6 +1744,8 @@ v4v_stream_sendvto_from_private(struct v4v_private *p,
                                        || !stream_connected(p));
         if (ret == 0)
                 ret = ts_ret;
+	
+	dprintk_out();
 
         return ret;
 }
@@ -1641,6 +1786,8 @@ static int v4v_get_peer_name(struct v4v_private *p, v4v_addr_t * id)
 
 static int v4v_set_ring_size(struct v4v_private *p, uint32_t ring_size)
 {
+	
+	dprintk_in();
 
         if (ring_size <
             (sizeof(struct v4v_ring_message_header) + V4V_ROUNDUP(1)))
@@ -1657,6 +1804,8 @@ static int v4v_set_ring_size(struct v4v_private *p, uint32_t ring_size)
         p->desired_ring_size = ring_size;
         read_unlock(&list_lock);
 
+	dprintk_out();
+
         return 0;
 }
 
@@ -1665,14 +1814,16 @@ v4v_recvfrom_dgram(struct v4v_private *p, void *buf, size_t len,
                    int nonblock, int peek, v4v_addr_t * src)
 {
         ssize_t ret;
-        uint32_t protocol;
         v4v_addr_t lsrc;
+        uint32_t protocol;
+
+	dprintk_in();
 
         if (!src)
                 src = &lsrc;
 
-	dprintk("source port, domain: %#lx, %#lx, protocol: %#lx\n",
-	         (unsigned long) src->port, src->domain, protocol);
+	dprintk("source port: %#x, domain: %#x\n",
+	         src->port, src->domain);
 retry:
         if (!nonblock) {
                 ret = wait_event_interruptible(p->readq,
@@ -1708,13 +1859,17 @@ retry:
         }
         spin_unlock(&p->r->lock);
 
-        if (!peek)
+        if (!peek) {
+		dprintk_info("Is going to v4v_null_notify\n");
                 v4v_null_notify();
+	}
 
         if (protocol != V4V_PROTO_DGRAM) {
                 /* If peeking consume the rubbish */
-                if (peek)
+                if (peek) {
+			dprintk_info("consume the rubbish\n");
                         v4v_copy_out(p->r->ring, NULL, NULL, NULL, 1, 1);
+		}
                 read_unlock(&list_lock);
                 goto retry;
         }
@@ -1722,14 +1877,18 @@ retry:
         if ((p->state == V4V_STATE_CONNECTED) &&
             memcmp(src, &p->peer, sizeof(v4v_addr_t))) {
                 /* Wrong source - bin it */
-                if (peek)
+                if (peek) {
+			dprintk_info("wrong source - bin it\n");
                         v4v_copy_out(p->r->ring, NULL, NULL, NULL, 1, 1);
+		}
                 read_unlock(&list_lock);
                 goto retry;
         }
 
 unlock:
         read_unlock(&list_lock);
+
+	dprintk_out();
 
         return ret;
 }
@@ -1744,21 +1903,23 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
         int schedule_irq = 0;
         uint8_t *buf = (void *)_buf;
 
+	dprintk_in();
+
         read_lock(&list_lock);
 
         switch (p->state) {
         case V4V_STATE_DISCONNECTED:
-		dprintk_info("DISCONNECTED");
+		dprintk_info("DISCONNECTED\n");
                 ret = -EPIPE;
                 goto unlock;
         case V4V_STATE_CONNECTING:
-		dprintk_info("CONNECTING");
+		dprintk_info("CONNECTING\n");
                 ret = -ENOTCONN;
                 goto unlock;
         case V4V_STATE_CONNECTED:
-		dprintk_info("CONNECTED");
+		dprintk_info("CONNECTED\n");
         case V4V_STATE_ACCEPTED:
-		dprintk_info("ACCEPTED");
+		dprintk_info("ACCEPTED\n");
                 break;
         default:
                 ret = -EINVAL;
@@ -1768,7 +1929,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
         do {
                 if (!nonblock) {
 			struct timeval tv;
-			dprintk_info("!nonblock");
+			dprintk_info("!nonblock\n");
 			do_gettimeofday(&tv);
 			start = tv.tv_sec * 1000000 + tv.tv_usec;
         		read_unlock(&list_lock);
@@ -1785,9 +1946,9 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
 			}
                 }
 
-		dprintk_info("before spinlock");
+		dprintk_info("before spinlock\n");
                 spin_lock_irqsave(&p->pending_recv_lock, flags);
-		dprintk_info("in lock");
+		dprintk_info("in lock\n");
 
                 while (!list_empty(&p->pending_recv_list) && len) {
                         size_t to_copy;
@@ -1820,11 +1981,11 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
 			         (unsigned long) buf, (unsigned long) pending->data,
 			         (unsigned long) pending->data_ptr, (unsigned long) to_copy);
                 	//spin_unlock_irqrestore(&p->pending_recv_lock, flags);
-			dprintk_info("before copy to user");
+			dprintk_info("before copy to user\n");
                         if ((ret = copy_to_user(buf, pending->data + pending->data_ptr, to_copy)))
                         {
 				int ret2 = 0;
-				dprintk(" in error copy_to_user, %d", ret);
+				dprintk(" in error copy_to_user, %d\n", ret);
 				ret2 = copy_to_user(buf + to_copy - ret, pending->data + pending->data_ptr + to_copy - ret, ret);
 				if (ret2) {
 					printk(KERN_INFO "%s: fatal... %d\n", __func__, ret2);
@@ -1833,9 +1994,9 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
 					ret = -EFAULT;
 					goto unlock;
 				}
-				dprintk(" continuing ;-) %d", ret2);
+				dprintk(" continuing ;-) %d\n", ret2);
                         }
-			dprintk_info("after copy_to_user");
+			dprintk_info("after copy_to_user\n");
                 	//spin_lock_irqsave(&p->pending_recv_lock, flags);
 
                         if (unlink) {
@@ -1853,7 +2014,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                 }
 
                 spin_unlock_irqrestore(&p->pending_recv_lock, flags);
-		dprintk_info("after spinlock");
+		dprintk_info("after spinlock\n");
 
                 if (p->state == V4V_STATE_DISCONNECTED) {
                         ret = -EPIPE;
@@ -1872,19 +2033,23 @@ unlock:
         if (schedule_irq)
                 v4v_fake_irq();
 
+	dprintk_out();
         return count ? count : ret;
 }
 
 static ssize_t
 v4v_send_stream(struct v4v_private *p, const void *_buf, int len, int nonblock)
 {
-        int write_lump;
+        unsigned long write_lump;
         const uint8_t *buf = _buf;
         size_t count = 0;
         ssize_t ret;
         int to_send;
 
-        write_lump = DEFAULT_RING_SIZE >> 2;
+	dprintk_in();
+
+        write_lump = (p->r->ring->len ? p->r->ring->len >> 1 : (DEFAULT_RING_SIZE) >> 2); //DEFAULT_RING_SIZE >> 2;
+        //printk(KERN_INFO "write_lump: %#lx\n", write_lump);
 
         switch (p->state) {
         case V4V_STATE_DISCONNECTED:
@@ -1902,7 +2067,8 @@ v4v_send_stream(struct v4v_private *p, const void *_buf, int len, int nonblock)
                 struct v4v_stream_header sh;
                 v4v_iov_t iovs[2];
 
-                to_send = len;// > write_lump ? write_lump : len;
+                to_send = len > write_lump ? write_lump : len;
+        	dprintk("to_send: %#lx, write_lump:%#lx\n", (unsigned long) to_send, write_lump);
                 sh.flags = 0;
                 sh.conid = p->conid;
 
@@ -1934,7 +2100,8 @@ v4v_send_stream(struct v4v_private *p, const void *_buf, int len, int nonblock)
                 if (nonblock)
                         return count;
         }
-
+	
+	dprintk_out();
         return count;
 }
 
@@ -1951,7 +2118,7 @@ static int v4v_bind(struct v4v_private *p, struct v4v_ring_id *ring_id)
 		goto out;
         }
 	/*jo : trace*/
-	printk(KERN_INFO "ring_id->addr.domain = %d\n",ring_id->addr.domain);
+	//printk(KERN_INFO "ring_id->addr.domain = %d\n",ring_id->addr.domain);
 
         switch (p->ptype) {
         case V4V_PTYPE_DGRAM:
@@ -2040,7 +2207,9 @@ static int v4v_connect(struct v4v_private *p, v4v_addr_t * peer, int nonblock)
                         ret = 0;
 		dprintk("ret = %d\n",ret);
 
-                if (ret && (ret != -EAGAIN)) {
+                if (ret ) {
+			if (ret == -EAGAIN)
+				goto out;
                         p->state = V4V_STATE_BOUND;
                         p->r->type = V4V_RTYPE_DGRAM;
                         ret = ret;
@@ -2148,7 +2317,7 @@ static int allocate_fd_with_private(void *private)
 static int
 v4v_accept(struct v4v_private *p, struct v4v_addr *peer, int nonblock)
 {
-        int fd;
+        int fd = -1;
         int ret = 0;
         struct v4v_private *a = NULL;
         struct pending_recv *r = NULL;
@@ -2262,7 +2431,7 @@ v4v_accept(struct v4v_private *p, struct v4v_addr *peer, int nonblock)
         sh.conid = a->conid;
         sh.flags = V4V_SHF_ACK;
 
-	dprintk("%s: conid = %#lx, flag = %#lx\n", __func__, sh.conid, sh.flags);
+	dprintk("%s: conid = %#x, flag = %#x\n", __func__, sh.conid, sh.flags);
 
         xmit_queue_inline(&a->r->ring->id, &a->peer, &sh,
                           sizeof(sh), V4V_PROTO_STREAM);
@@ -2310,12 +2479,12 @@ v4v_sendto(struct v4v_private * p, const void *buf, size_t len, int flags,
 
         switch (p->ptype) {
         case V4V_PTYPE_DGRAM:
-                dprintk_info("dgram");
+                dprintk_info("dgram\n");
                 switch (p->state) {
                 case V4V_STATE_BOUND:
-                	dprintk_info("bound");
+                	dprintk_info("bound\n");
                         if (!addr) {
-                		dprintk_info("not addr");
+                		dprintk_info("not addr\n");
                                 ret = -ENOTCONN;
                                 goto out;
                         }
@@ -2324,9 +2493,9 @@ v4v_sendto(struct v4v_private * p, const void *buf, size_t len, int flags,
                         break;
 
                 case V4V_STATE_CONNECTED:
-                	dprintk_info("connected");
+                	dprintk_info("connected\n");
                         if (addr) {
-                		dprintk_info("addr");
+                		dprintk_info("addr\n");
                                 ret = -EISCONN;
                                 goto out;
 			}
@@ -2336,52 +2505,52 @@ v4v_sendto(struct v4v_private * p, const void *buf, size_t len, int flags,
                         break;
 
                 default:
-                	dprintk_info("default");
+                	dprintk_info("default\n");
                         ret = -EINVAL;
                         goto out;
                 }
                 break;
         case V4V_PTYPE_STREAM:
-                dprintk_info("stream");
+                dprintk_info("stream\n");
                 if (addr) {
-                	dprintk_info("addr");
+                	dprintk_info("addr\n");
                         ret = -EISCONN;
                         goto out;
                 }
                 switch (p->state) {
                 case V4V_STATE_CONNECTING:
-                	dprintk_info("connecting");
+                	dprintk_info("connecting\n");
                 case V4V_STATE_BOUND: {
-                	dprintk_info("bound");
+                	dprintk_info("bound\n");
                         ret = -ENOTCONN;
                         goto out;
 		}
                 case V4V_STATE_CONNECTED:
-                	dprintk_info("connected");
+                	dprintk_info("connected\n");
                 case V4V_STATE_ACCEPTED:
-                	dprintk_info("accepted");
+                	dprintk_info("accepted\n");
                         rc = v4v_send_stream(p, buf, len, nonblock);
                         break;
                 case V4V_STATE_DISCONNECTED:
 
-                	dprintk_info("disconnected");
+                	dprintk_info("disconnected\n");
                         rc = -EPIPE;
                         break;
                 default:
-                	dprintk_info("default");
+                	dprintk_info("default\n");
 
                         ret = -EINVAL;
                         goto out;
                 }
                 break;
         default:
-                dprintk_info("default");
+                dprintk_info("default\n");
 
                 return -ENOTTY;
         }
 
         if ((rc == -EPIPE) && !(flags & MSG_NOSIGNAL)) {
-                dprintk_info("EPIPE");
+                dprintk_info("EPIPE\n");
                 send_sig(SIGPIPE, current, 0);
 	}
 
@@ -2423,43 +2592,43 @@ v4v_recvfrom(struct v4v_private * p, void *buf, size_t len, int flags,
 
         switch (p->ptype) {
         case V4V_PTYPE_DGRAM:
-		dprintk_info("dgram");
+		dprintk_info("dgram\n");
                 rc = v4v_recvfrom_dgram(p, buf, len, nonblock, peek, addr);
                 break;
         case V4V_PTYPE_STREAM:
-		dprintk_info("STREAM");
+		dprintk_info("STREAM\n");
                 if (peek) {
-			dprintk_info("peek");
+			dprintk_info("peek\n");
                         ret = -EINVAL;
                         goto out;
 		}
 
                 switch (p->state) {
                 case V4V_STATE_BOUND: {
-			dprintk_info("BOUND state");
+			dprintk_info("BOUND state\n");
                         ret = -ENOTCONN;
 			goto out;
                         }
                 case V4V_STATE_CONNECTED:
-			dprintk_info("CONNECTED state");
+			dprintk_info("CONNECTED state\n");
                 case V4V_STATE_ACCEPTED:
-			dprintk_info("ACCEPTED state");
+			dprintk_info("ACCEPTED state\n");
                         if (addr)
                                 *addr = p->peer;
                         rc = v4v_recv_stream(p, buf, len, flags, nonblock);
                         break;
                 case V4V_STATE_DISCONNECTED:
-			dprintk_info("DISCONNECTED state");
+			dprintk_info("DISCONNECTED state\n");
                         rc = 0;
                         break;
                 default:
-			dprintk_info("DEFAULT state");
+			dprintk_info("DEFAULT state\n");
                         rc = -EINVAL;
                 }
         }
 
         if ((rc > (ssize_t) len) && !(flags & MSG_TRUNC)) {
-		dprintk_info("if clause, rc = len");
+		dprintk_info("if clause, rc = len\n");
                 rc = len;
 	}
 
@@ -2623,24 +2792,45 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 			goto out;
 		}
                 rc = v4v_set_ring_size(p, *(uint32_t *) arg);
+		dprintk("%s: args=%#x\n", v4v_ioctl2text(cmd), *(uint32_t *) arg);
                 break;
-        case V4VIOCBIND:
+        case V4VIOCBIND: {
+		struct v4v_ring_id * ring_id = (struct v4v_ring_id *)arg;
+		struct v4v_addr * addr = &ring_id->addr;
+		uint32_t port = addr->port;
+		uint32_t domain = addr->domain;
+		uint32_t partner = ring_id->partner;
+
                 if (!access_ok(VERIFY_READ, arg, sizeof(struct v4v_ring_id))) {
 			dprintk_err("Access not ok %#lx\n", arg);
 			rc = -EFAULT;
 			goto out;
 		}
+		dprintk("%s: addr=(port:%#x, domain:%#x), partner=%#x\n", v4v_ioctl2text(cmd), port, domain, partner);
                 rc = v4v_bind(p, (struct v4v_ring_id *)arg);
                 break;
-        case V4VIOCGETSOCKNAME:
+	}
+        case V4VIOCGETSOCKNAME: {
+		struct v4v_ring_id * ring_id = (struct v4v_ring_id *)arg;
+		struct v4v_addr * addr = &ring_id->addr;
+		uint32_t port = addr->port;
+		uint32_t domain = addr->domain;
+		uint32_t partner = ring_id->partner;
                 if (!access_ok(VERIFY_WRITE, arg, sizeof(struct v4v_ring_id))) {
 			dprintk_err("Access not ok %#lx", arg);
 			rc = -EFAULT;
 			goto out;
 		}
                 rc = v4v_get_sock_name(p, (struct v4v_ring_id *)arg);
+		dprintk("%s: addr=(port:%#x, domain:%#x), partner=%#x\n", v4v_ioctl2text(cmd), port, domain, partner);
                 break;
-        case V4VIOCGETPEERNAME:
+	}
+        case V4VIOCGETPEERNAME: {
+		struct v4v_ring_id * ring_id = (struct v4v_ring_id *)arg;
+		struct v4v_addr * addr = &ring_id->addr;
+		uint32_t port = addr->port;
+		uint32_t domain = addr->domain;
+		uint32_t partner = ring_id->partner;
                 if (!access_ok(VERIFY_WRITE, arg, sizeof(v4v_addr_t))) {
 			dprintk_err("Access not ok %#lx", arg);
 			rc = -EFAULT;
@@ -2648,8 +2838,26 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 		}
                 /* Bind if not done */
                 rc = v4v_get_peer_name(p, (v4v_addr_t *) arg);
+                if (p->state == V4V_STATE_IDLE) {
+                        struct v4v_ring_id id;
+                        dprintk("%s: IOCCONNECT, STATE_IDLE\n", __func__);
+                        memset(&id, 0, sizeof(id));
+                        id.partner = V4V_DOMID_NONE;
+                        id.addr.domain = V4V_DOMID_NONE;
+                        id.addr.port = 0;
+                        rc = v4v_bind(p, &id);
+                        if (rc) {
+				dprintk_info("paparia\n");
+                                break;
+                                }
+                }
+		dprintk("%s: addr=(port:%#x, domain:%#x), partner=%#x\n", v4v_ioctl2text(cmd), port, domain, partner);
                 break;
-        case V4VIOCCONNECT:
+	}
+        case V4VIOCCONNECT: {
+		struct v4v_addr * addr = (v4v_addr_t*)arg;
+		uint32_t port = addr->port;
+		uint32_t domain = addr->domain;
                 if (!access_ok(VERIFY_READ, arg, sizeof(v4v_addr_t))) {
 			dprintk_err("Access not ok %#lx", arg);
 			rc = -EFAULT;
@@ -2670,9 +2878,10 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                                 }
                 }
 		/*jo : trace*/
-		dprintk_info("mpainei sto connect tou ioctl");
+		dprintk("%s: addr=(port:%#x, domain:%#x)\n", v4v_ioctl2text(cmd), port, domain);
                 rc = v4v_connect(p, (v4v_addr_t *) arg, nonblock);
                 break;
+	}
         case V4VIOCGETCONNECTERR:
                 {
                         unsigned long flags;
@@ -2687,19 +2896,27 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                         p->pending_error = 0;
                         spin_unlock_irqrestore(&p->pending_recv_lock, flags);
                         rc = 0;
+			dprintk("%s: pending_error:%d)\n", v4v_ioctl2text(cmd), *(int *)arg);
                 }
                 break;
-        case V4VIOCLISTEN:
+        case V4VIOCLISTEN: {
                 rc = v4v_listen(p);
+		dprintk("%s: rc:%d)\n", v4v_ioctl2text(cmd), rc);
                 break;
-        case V4VIOCACCEPT:
+	}
+        case V4VIOCACCEPT: {
+		struct v4v_addr * addr = (v4v_addr_t *) arg;
+		uint32_t port = addr->port;
+		uint32_t domain = addr->domain;
                 if (!access_ok(VERIFY_WRITE, arg, sizeof(v4v_addr_t))) {
 			dprintk_err("Access not ok %#lx", arg);
                         rc = -EFAULT;
                         goto out;
                 }
                 rc = v4v_accept(p, (v4v_addr_t *) arg, nonblock);
+		dprintk("%s: addr=(port:%#x, domain:%#x), rc:%d\n", v4v_ioctl2text(cmd), port, domain, rc);
                 break;
+	}
         case V4VIOCSEND:
                 if (!access_ok(VERIFY_READ, arg, sizeof(struct v4v_dev))) {
 			dprintk_err("Access not ok %#lx", arg);
@@ -2708,9 +2925,14 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 }
                 {
                         struct v4v_dev a = *(struct v4v_dev *)arg;
+			struct v4v_addr * addr = (v4v_addr_t * ) &a.addr;
+			uint32_t port = addr->port;
+			uint32_t domain = addr->domain;
 
                         rc = v4v_sendto(p, a.buf, a.len, a.flags, a.addr,
                                         nonblock);
+
+			dprintk("%s: addr=(port:%#x, domain:%#x), buf:%p, len:%#lx, rc:%d\n", v4v_ioctl2text(cmd), port, domain, a.buf, a.len, rc);
                 }
                 break;
         case V4VIOCRECV:
@@ -2721,8 +2943,12 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                 }
                 {
                         struct v4v_dev a = *(struct v4v_dev *)arg;
+			struct v4v_addr * addr = (v4v_addr_t *) &a.addr;
+			uint32_t port = addr->port;
+			uint32_t domain = addr->domain;
                         rc = v4v_recvfrom(p, a.buf, a.len, a.flags, a.addr,
                                           nonblock);
+			dprintk("%s: addr=(port:%#x, domain:%#x), buf:%p, len:%#lx, rc:%d\n", v4v_ioctl2text(cmd), port, domain, a.buf, a.len, rc);
                 }
                 break;
         case V4VIOCVIPTABLESADD:
@@ -2892,7 +3118,7 @@ static int bind_evtchn(void)
         dprintk_in();
         v4v_info(&info);
         if (info.ring_magic != V4V_RING_MAGIC) {
-		printk(KERN_ERR "ring magic diff!, info.ring_magic = %#lx, %#lx\n", info.ring_magic, V4V_RING_MAGIC);
+		printk(KERN_ERR "ring magic diff!, info.ring_magic = %#lx, %#lx\n", (unsigned long) info.ring_magic, (unsigned long) V4V_RING_MAGIC);
                 ret = 1;
 		goto out;
 	}
@@ -3085,6 +3311,8 @@ static void __exit v4v_cleanup(void)
         platform_driver_unregister(&v4v_driver);
 	dprintk_out();
 }
+
+
 
 
 module_init(v4v_init);

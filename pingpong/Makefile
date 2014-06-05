@@ -6,5 +6,5 @@ intranode.o: intranode.c utils.h
 	gcc -I . -c intranode.c
 
 clean:
-	rm *.o
+	rm *.o *.so
 

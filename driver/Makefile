@@ -6,14 +6,14 @@ ETAGS=etags
 
 # Add your debugging flag (or not) to CFLAGS
 ifeq ($(DEBUG),y)
-  EXTRA_CFLAGS += -O -g -Wall -Wstrict-prototypes -DDEBUG_SLURPOE
+  EXTRA_CFLAGS += -O -g -Wall -Wstrict-prototypes -DV4V_DEBUG
   # "-O" is needed to expand inlines
 else
   EXTRA_CFLAGS += -O
 endif
 
 ifeq ($(EXTRA_DEBUG),y)
-  EXTRA_CFLAGS += -O -g -Wall -Wstrict-prototypes -DEXTRA_DEBUG_SLURPOE
+  EXTRA_CFLAGS += -O -g -Wall -Wstrict-prototypes -DV4V_EXTRA_DEBUG
   # "-O" is needed to expand inlines
 else
   EXTRA_CFLAGS += -O3
@@ -21,7 +21,7 @@ endif
 
 TARGET  = v4v
 
-EXTRA_CFLAGS += -I$(obj)/../../common -I$(obj)/../../../common -I/local/ialif-xen/xen-v4v/xen/include #-DV4V_DEBUG
+EXTRA_CFLAGS += -I$(obj)/../../common -I$(obj)/../../../common -I/local/ialif-xen/xen-v4v/xen/include 
 
 # If KERNELRELEASE is defined, we've been invoked from the kernel build system
 # and can use its language.

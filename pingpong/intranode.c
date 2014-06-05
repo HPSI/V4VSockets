@@ -29,12 +29,42 @@ void print(unsigned char* buf, uint32_t size);
 int validate_data(unsigned char* reader, unsigned char* writer, uint32_t size);
 void initialize_data(unsigned char *buf, uint32_t size);
 
+static void v4v_hexdump(void *_p, int len)
+{
+    uint8_t *buf = (uint8_t *)_p;
+    int i, j;
+
+    for ( i = 0; i < len; i += 16 )
+    {
+        printf("%p:", &buf[i]);
+        for ( j = 0; j < 16; ++j )
+        {
+            int k = i + j;
+            if ( k < len )
+                printf(" %02x", buf[k]);
+            else
+                printf("   ");
+        }
+        printf(" ");
+
+        for ( j = 0; j < 16; ++j )
+        {
+            int k = i + j;
+            if ( k < len )
+                printf("%c", ((buf[k] > 32) && (buf[k] < 127)) ? buf[k] : '.');
+            else
+                printf(" ");
+        }
+        printf("\n");
+    }
+}
+
 /*global variables*/
+int cmdline_validate_data = 0;
 int initial_data_size = -1;
 int last_data_size = -1;
 int print_enabled = 0;
 int p = 0;
-int validate_enabled = 0;
 int family = AF_INET;
 int type = -1;
 int protocol = 0;
@@ -47,13 +77,14 @@ unsigned long partner_address = -1;
 unsigned char *reader, *writer;
 int iteration_num = -1;
 
+#if 1
 void* aligned_malloc(size_t size) {
 	void *ptr;
 	posix_memalign(&ptr, 4096, size);
 	//ptr = malloc(size);
 	return ptr;
 }
-#if 0
+#else
 void* aligned_malloc(size_t size) {
 	void *ptr;
 	void *p = malloc(size+ALIGN-1+sizeof(void*));
@@ -65,11 +96,13 @@ void* aligned_malloc(size_t size) {
 	return NULL;
 }
 #endif
+
+#if 1
 void aligned_free(void *p) {
 	free(p);
 }
+#else
 
-#if 0
 void aligned_free(void *p) {
 	void *ptr = *((void**)((unsigned int)p - sizeof(void*)));
 	free(ptr);
@@ -110,7 +143,7 @@ void client_dgram() {
                 exit(-1);
         }
         serLen = sizeof(server);
-	        for(data_size = initial_data_size; data_size <= last_data_size; data_size+=1 ) {
+	        for(data_size = initial_data_size; data_size <= last_data_size; data_size<<=1 ) {
         TIMER_RESET(&timer_total);
         /*write*/
                 writer = (char*) aligned_malloc(data_size);
@@ -147,7 +180,10 @@ void client_dgram() {
                             //    rtotal += ret;
                         //}
                 TIMER_STOP(&timer_total);
-                        ret = validate_data(reader, writer, data_size);
+                ret = validate_data(reader, writer, data_size);
+		if (ret) {
+			break;
+		}
                 TIMER_START(&timer_total);
 
                         //printf("\nread %ld %ld\n", TIMER_COUNT(&timer_read), TIMER_TOTAL(&timer_read));
@@ -209,20 +245,23 @@ void client() {
 	for(data_size = initial_data_size; data_size <= last_data_size; data_size<<=1) {
 	TIMER_RESET(&timer_total);
 	/*write*/
-		writer = (char*) aligned_malloc(data_size);
-		reader = (char*) aligned_malloc(data_size);
-		printf ("write ptr @%p\n", writer);
-		printf ("read ptr @%p\n", reader);
-		initialize_data(writer, data_size);
-		initialize_data(reader, data_size);
-		if (print_enabled) {
-        		print(writer, data_size);
-        	}
 		TIMER_START(&timer_total);
 		TIMER_RESET(&timer_read);
 		TIMER_RESET(&timer_write);
 		for(i = 0; i < iteration_num; i++) {
 			int rtotal = 0, wtotal = 0;
+			TIMER_STOP(&timer_total);
+			writer = (char*) aligned_malloc(data_size);
+			reader = (char*) aligned_malloc(data_size);
+			//printf ("write ptr @%p\n", writer);
+			//printf ("read ptr @%p\n", reader);
+			initialize_data(writer, data_size);
+			initialize_data(reader, data_size);
+			if (print_enabled) {
+				print(writer, data_size);
+			}
+
+			TIMER_START(&timer_total);
 			while(wtotal < data_size) {
 			        TIMER_START(&timer_write);
 				ret = sendto(fd, writer + (wtotal ? wtotal : 0 ), data_size - wtotal, flags, (struct sockaddr*) &server, (socklen_t) serLen);
@@ -233,6 +272,8 @@ void client() {
 				}
                         	wtotal += ret;
 			}
+			//v4v_hexdump(writer, data_size);
+			//break;
 			while(rtotal < data_size) {
 				TIMER_START(&timer_read);
     				ret = recvfrom(fd, reader + (rtotal ? rtotal :0), data_size - rtotal, flags, (struct sockaddr*) &server, (socklen_t *) &serLen);
@@ -245,15 +286,19 @@ void client() {
 				rtotal += ret;
 			}
                 TIMER_STOP(&timer_total);
-			ret = validate_data(reader, writer, data_size);
+		ret = validate_data(reader, writer, data_size);
+		if (ret) {
+			sleep(10);
+			break;
+		}
+		aligned_free(reader);
+		aligned_free(writer);
                 TIMER_START(&timer_total);
 
 			//printf("\nread %ld %ld\n", TIMER_COUNT(&timer_read), TIMER_AVG(&timer_read));
 			//printf("\nwrite %ld %ld\n", TIMER_COUNT(&timer_write), TIMER_AVG(&timer_write));
 		}
 		TIMER_STOP(&timer_total);
-		aligned_free(reader);
-		aligned_free(writer);
 		/*total time*/
 		//printf("%ld %lf %lf \n", data_size, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num / (TIMER_TOTAL(&timer_total) / 2));
 		time_read = TIMER_AVG(&timer_read);
@@ -269,6 +314,7 @@ void client() {
 	}
 	//if (ret == 0)
 	//	printf("OK!\n");
+	//sleep(16);
 	close(fd);
 	return;
 }
@@ -330,8 +376,12 @@ void server_stream() {
                 		printf("%s: I have read :\n", __func__);
                 		print(reader, data_size);
         		}
+			//v4v_hexdump(reader, data_size);
+			//break;
+			//sleep(10);
         		/*write*/
 			//ret = write(new_fd, reader, data_size);
+			//sleep(20);
 			while(wtotal < data_size) {
         			ret = sendto(new_fd, reader + (wtotal ? wtotal : 0), data_size - wtotal, flags, (struct sockaddr*) &client, (socklen_t) cliLen);
         			if (ret<0) {
@@ -435,18 +485,27 @@ void print(unsigned char *buf, uint32_t size) {
 
 int validate_data(unsigned char* reader, unsigned char* writer, uint32_t size) {
 	int i;
-	for(i=0; i<size; i++)
-		if(reader[i] != writer[i]) {
-			printf("Data corruption: %d, %d, %d,\n", reader[i], writer[i], i);
-			return(-1);
-		}
-	return 0;
+	int ret = 0;
+	if (cmdline_validate_data) 
+		for(i=0; i<size; i++)
+			if(reader[i] != writer[i]) {
+				printf("Data corruption: (is) %c, (should be) %c, %d (total:%d),\n", reader[i], writer[i], i, size);
+				ret = -1;
+			}
+	if (ret) {
+		v4v_hexdump(reader, size);
+		printf("\n\n\n\n");
+		v4v_hexdump(writer, size);
+	}
+	return ret;
 }
 
 void initialize_data(unsigned char *buf, uint32_t size) {
 	int i;
 	for(i=0; i<size; i++)
-		buf[i] = (unsigned char) rand();
+		//buf[i] = (unsigned char) rand();
+		//buf[i] = (unsigned char) (rand() % 25 + 65);
+		buf[i] = (unsigned char) (rand() % 25 + 65);
 	return;
 }
 
@@ -512,7 +571,7 @@ int main(int argc, char** argv) {
 			iteration_num = atoi(optarg);
 			break;
 		case 'v':
-			validate_enabled = 1;
+			cmdline_validate_data = 1;
 			break;
 		case 'p':
 			//print_enabled = 1;

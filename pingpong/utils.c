@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <sys/types.h>
+#include <errno.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
@@ -31,18 +32,19 @@ int socket(int domain, int type, int protocol) {
 	int ret = 0;
 	uint32_t real_ring_size;
 
-		ring_size = protocol;
+		ring_size = protocol ? protocol: 64 * 1024;
 		if (type == SOCK_STREAM) {
-			real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 92);
-			//real_ring_size = protocol;
+			//real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 92);
+			real_ring_size = ring_size;
 			fd = open("/dev/v4v_stream", flags);
 		}
 		else { 
 			dgram = 1;
 			fd = open("/dev/v4v_dgram", flags);
-			real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 84);
-			//real_ring_size = protocol;
+			//real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 84);
+			real_ring_size = ring_size;
 		}
+		printf("real_ring_size = %#lx\n", real_ring_size);
 		if (fd > 0)
 			ret = ioctl(fd, V4VIOCSETRINGSIZE, &real_ring_size);
 		if (ret < 0)
@@ -73,6 +75,7 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 		peer.port = addr_in.sin_port;
 		peer.domain = addr_in.sin_addr.s_addr;
 		ret = ioctl(sockfd, V4VIOCCONNECT, &peer);
+		
 	
 	return ret;
 }
@@ -81,7 +84,8 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
 	int ret = -1;
 
-		ret = ioctl(sockfd, V4VIOCACCEPT, &peer);
+	ret = ioctl(sockfd, V4VIOCACCEPT, &peer);
+	
 
 	return ret;
 }
