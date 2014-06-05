@@ -176,7 +176,7 @@ struct pending_xmit {
         uint8_t data[0];
 };
 
-#define MAX_PENDING_RECVS        1024
+#define MAX_PENDING_RECVS        16
 
 /* Hypercalls */
 
@@ -823,7 +823,7 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 	dprintk_in();
         /* Too much queued? Let the ring take the strain */
         if ((count = atomic_read(&p->pending_recv_count)) > MAX_PENDING_RECVS) {
-                dprintk_err("pending recv count %d\n", count);
+                dprintk("pending recv count %d, p->full:%d\n", count, p->full);
                 spin_lock(&p->pending_recv_lock);
                 p->full = 1;
                 spin_unlock(&p->pending_recv_lock);
@@ -1241,7 +1241,7 @@ acceptor_interrupt(struct v4v_private *p, struct ring *r,
 	/*edw logika einai to recieve gia ton server*/
         ret = copy_into_pending_recv(r, msg_len, p);
 	if (ret < 0) {
-		dprintk_err("copy failed, r:%p, msg_len:%#lx, p:%p, ret: %d\n", r, msg_len, p, ret);
+		dprintk("copy failed, r:%p, msg_len:%#lx, p:%p, ret: %d\n", r, msg_len, p, ret);
 	}
         wake_up_interruptible_all(&p->readq);
 
@@ -1328,7 +1328,7 @@ static int listener_interrupt(struct ring *r)
 		dprintk_info("Edw einai gia to SYN???????\n");
                 ret = copy_into_pending_recv(r, msg_len, r->sponsor);
 		if (ret < 0) {
-			dprintk_err("copy failed, r:%p, msg_len:%#lx, r->sponsor:%p, ret: %d\n", r, msg_len, r->sponsor, ret);
+			dprintk("copy failed, r:%p, msg_len:%#lx, r->sponsor:%p, ret: %d\n", r, msg_len, r->sponsor, ret);
 		}
                 wake_up_interruptible_all(&r->sponsor->readq);
                 goto out;

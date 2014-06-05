@@ -32,7 +32,7 @@ int socket(int domain, int type, int protocol) {
 	int ret = 0;
 	uint32_t real_ring_size;
 
-		ring_size = protocol ? protocol: 64 * 1024;
+		ring_size = protocol ? protocol: V4V_ROUNDUP(16 * 1024);
 		if (type == SOCK_STREAM) {
 			//real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 92);
 			real_ring_size = ring_size;
