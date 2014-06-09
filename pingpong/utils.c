@@ -12,6 +12,7 @@
 #include "v4v.h"
 
 
+#define vaxunsign(x) ((unsigned)x & 0xff)
 uint32_t ring_size;
 int dgram = 0;
 v4v_ring_id_t my_ring;
@@ -27,7 +28,7 @@ unsigned long inet_addr(char *cp) {
 }
 
 int socket(int domain, int type, int protocol) {
-	int flags = O_RDWR | O_NONBLOCK;
+	int flags = O_RDWR;// | O_NONBLOCK;
 	int fd = -1;
 	int ret = 0;
 	uint32_t real_ring_size;
@@ -81,15 +82,16 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 
 	do {
 		memcpy(&addr_in, addr, addrlen);
+		dump_sockaddr(stderr, &addr_in);
 		peer.port = addr_in.sin_port;
 		if (!addr_in.sin_port) my_ring.addr.port=0x4132;
 		fprintf(stderr,"%s: port:%#x\n", __func__, peer.port);
 		peer.domain = addr_in.sin_addr.s_addr;
 		fprintf(stderr,"%s: domain:%#x\n", __func__, peer.domain);
-		peer.domain=2;
+		peer.domain=1;
 		ret = ioctl(sockfd, V4VIOCCONNECT, &peer);
 		fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
-	} while (ret == -1);
+	} while (ret == -EINPROGRESS);
 		
 	
 	return ret;
@@ -225,7 +227,7 @@ int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
 	struct sockaddr_in *addr_in = addr;
 
-	addr_in->sin_addr.s_addr = 1;
+	addr_in->sin_addr.s_addr = 2;
 	addr_in->sin_port = 0x4132;
 	addr_in->sin_family = AF_INET;
 	return 0;
@@ -234,7 +236,7 @@ int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 {
 	struct sockaddr_in *addr_in = addr;
 
-	addr_in->sin_addr.s_addr = 1;
+	addr_in->sin_addr.s_addr = 2;
 	addr_in->sin_port = 0x4132;
 	addr_in->sin_family = AF_INET;
 	return 0;
@@ -245,4 +247,54 @@ int setsockopt(int sockfd, int level, int optname,
 {
 return 0;
 }
+
+
+int	dump_sockaddr(FILE *tfp, struct sockaddr_in *sinptr)
+	{
+	int	k;
+
+	/*  in <in.h>
+	struct	sockaddr_in  {
+		short	sin_family;
+		u_short	sin_port;
+		struct	in_addr	sin_addr;
+		char	sin_zero[8];
+	}	*/
+
+	if ( (sinptr == (struct sockaddr_in *)NULL) ||
+	     (tfp == (FILE *)NULL) )
+		return(-1);			/* insurance */
+
+	fprintf(tfp,
+	"\n  struct sockaddr_in { ");
+	k = sinptr->sin_family;
+						/* print port number (or
+				0 = "to be assigned by system" */
+	fprintf(tfp,
+	"\n       u_short sin_port(=%hu);", ntohs(sinptr->sin_port));
+
+						/* print ip address */
+	fprintf(tfp,
+	"\n       struct  in_addr sin_addr.s_addr(=%u=%d.%d.%d.%d);",
+			ntohl(sinptr->sin_addr.s_addr),
+			(ntohl(sinptr->sin_addr.s_addr) & 0xff000000) >> 24,
+			(ntohl(sinptr->sin_addr.s_addr) & 0x00ff0000) >> 16,
+			(ntohl(sinptr->sin_addr.s_addr) & 0x0000ff00) >>  8,
+			(ntohl(sinptr->sin_addr.s_addr) & 0x000000ff));
+	fprintf(tfp,
+	"\n       char    sin_zero[8](=%x %x %x %x %x %x %x %x);",
+			vaxunsign(sinptr->sin_zero[0]),
+			vaxunsign(sinptr->sin_zero[1]),
+			vaxunsign(sinptr->sin_zero[2]),
+			vaxunsign(sinptr->sin_zero[3]),
+			vaxunsign(sinptr->sin_zero[4]),
+			vaxunsign(sinptr->sin_zero[5]),
+			vaxunsign(sinptr->sin_zero[6]),
+			vaxunsign(sinptr->sin_zero[7]));
+	fprintf(tfp,
+	"\n  } ");
+
+	fflush(tfp);
+	return(0);
+}  /* end of dump_sockaddr */
 

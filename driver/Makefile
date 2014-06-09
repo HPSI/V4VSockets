@@ -1,6 +1,6 @@
 # Comment/uncomment the following line to disable/enable debugging
-EXTRA_DEBUG = y
-DEBUG = y
+EXTRA_DEBUG = n
+DEBUG = n
 
 ETAGS=etags 
 
