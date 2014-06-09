@@ -262,6 +262,15 @@ void client() {
 			}
 
 			TIMER_START(&timer_total);
+#if 0
+			printf("writer iter:%d\n", i);
+			if (i == 255) {
+				writer[0]='N';
+				writer[1]='A';
+				writer[2]='N';
+				writer[3]='O';
+			}
+#endif
 			while(wtotal < data_size) {
 			        TIMER_START(&timer_write);
 				ret = sendto(fd, writer + (wtotal ? wtotal : 0 ), data_size - wtotal, flags, (struct sockaddr*) &server, (socklen_t) serLen);
@@ -272,8 +281,10 @@ void client() {
 				}
                         	wtotal += ret;
 			}
+//			printf("total:%d: %d, writer:%#x %#x %#x %#X\n", wtotal, ret, writer[0], writer[1], writer[2], writer[3]);
 			//v4v_hexdump(writer, data_size);
 			//break;
+//			printf("reader iter:%d\n", i);
 			while(rtotal < data_size) {
 				TIMER_START(&timer_read);
     				ret = recvfrom(fd, reader + (rtotal ? rtotal :0), data_size - rtotal, flags, (struct sockaddr*) &server, (socklen_t *) &serLen);
@@ -285,6 +296,7 @@ void client() {
 
 				rtotal += ret;
 			}
+//			printf("total:%d: %d\n", rtotal, ret);
                 TIMER_STOP(&timer_total);
 		ret = validate_data(reader, writer, data_size);
 		if (ret) {
@@ -363,6 +375,7 @@ void server_stream() {
 		for(i=0; i < iteration_num; i++) {
 			int rtotal = 0, wtotal = 0;
 			//ret = read(new_fd, reader, data_size);
+			//printf("reader:iter:%d\n", i);
 			while(rtotal < data_size) {
     	    			ret = recvfrom(new_fd, reader + (rtotal ? rtotal : 0), data_size - rtotal, flags, (struct sockaddr *) &client, (socklen_t *) &cliLen);
         			if (ret<0) {
@@ -372,6 +385,7 @@ void server_stream() {
         			}
 				rtotal += ret;
 			}
+			//printf("total:%d: %d\n", rtotal, ret);
        			if (print_enabled) {
                 		printf("%s: I have read :\n", __func__);
                 		print(reader, data_size);
@@ -382,6 +396,7 @@ void server_stream() {
         		/*write*/
 			//ret = write(new_fd, reader, data_size);
 			//sleep(20);
+			//printf("writer: iter:%d\n", i);
 			while(wtotal < data_size) {
         			ret = sendto(new_fd, reader + (wtotal ? wtotal : 0), data_size - wtotal, flags, (struct sockaddr*) &client, (socklen_t) cliLen);
         			if (ret<0) {
@@ -390,6 +405,7 @@ void server_stream() {
         			}
 				wtotal += ret;
 			}
+			//printf("total:%d: %d\n", wtotal, ret);
 		}
 		aligned_free(reader);
 	}

@@ -785,7 +785,7 @@ xmit_queue_inline(struct v4v_ring_id *from, v4v_addr_t * to,
 
         if (len) {
                 //*(char*)p->data = buf;
-		printk(KERN_INFO "p->data:%p\n", p->data);
+		//printk(KERN_INFO "p->data:%p\n", p->data);
                 memcpy(p->data, buf, len);
 	}
 
@@ -823,7 +823,7 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 	dprintk_in();
         /* Too much queued? Let the ring take the strain */
         if ((count = atomic_read(&p->pending_recv_count)) > MAX_PENDING_RECVS) {
-                dprintk("pending recv count %d, p->full:%d\n", count, p->full);
+                printk(KERN_INFO "pending recv count %d, p->full:%d\n", count, p->full);
                 spin_lock(&p->pending_recv_lock);
                 p->full = 1;
                 spin_unlock(&p->pending_recv_lock);
@@ -1277,7 +1277,8 @@ static int listener_interrupt(struct ring *r)
         }
 
         list_for_each_entry(p, &r->privates, node) {
-		dprintk_info("list for each\n");
+		dprintk("list for each, p->conid:%#lx, sh.conid:%#lx\n", p->conid, sh.conid);
+		//v4v_hexdump(&sh, sizeof(sh));
                 if ((p->conid == sh.conid)
                     && (!memcmp(&p->peer, &from, sizeof(v4v_addr_t)))) {
                         ret = acceptor_interrupt(p, r, &sh, msg_len);
@@ -1351,13 +1352,16 @@ static void v4v_interrupt_rx(void)
 	int cnt=0;
 
 	dprintk_in();
+	dprintk_info("INTERRUPT_RX\n");
         read_lock(&list_lock);
 
         /* Wake up anyone pending */
         list_for_each_entry(r, &ring_list, node) {
-                if (r->ring->tx_ptr == r->ring->rx_ptr)
+		dprintk("tx_ptr:%#lx, rx_ptr:%#lx\n", r->ring->tx_ptr, r->ring->rx_ptr);
+                if (r->ring->tx_ptr == r->ring->rx_ptr) {
+			dprintk("will continue tx_ptr:%#lx, rx_ptr:%#lx\n", r->ring->tx_ptr, r->ring->rx_ptr);
                         continue;
-
+		}
                 switch (r->type) {
                 case V4V_RTYPE_IDLE:
                         v4v_copy_out(r->ring, NULL, NULL, NULL, 1, 1);
@@ -1397,6 +1401,7 @@ static irqreturn_t v4v_interrupt(int irq, void *dev_id)
 
 	/*jo : trace*/
 	dprintk_in();
+	//printk("INTERRUPT\n");
         spin_lock_irqsave(&interrupt_lock, flags);
         v4v_interrupt_rx();
         v4v_notify();
@@ -1942,13 +1947,12 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
 			stop = tv.tv_sec * 1000000 + tv.tv_usec;
 			total += stop - start;
                         if (ret) {
+				dprintk_info("break in !nonblock\n");
                                 break;
 			}
                 }
 
-		dprintk_info("before spinlock\n");
                 spin_lock_irqsave(&p->pending_recv_lock, flags);
-		dprintk_info("in lock\n");
 
                 while (!list_empty(&p->pending_recv_list) && len) {
                         size_t to_copy;
@@ -2003,8 +2007,10 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                                 list_del(&pending->node);
                                 kfree(pending);
                                 atomic_dec(&p->pending_recv_count);
-                                if (p->full)
+                                if (p->full) {
+                                        printk(KERN_INFO "freeing up some stuff, pending recv count %d, p->full:%d\n", p->full);
                                         schedule_irq = 1;
+				}
                         } else
                                 pending->data_ptr += to_copy;
 
@@ -2048,7 +2054,8 @@ v4v_send_stream(struct v4v_private *p, const void *_buf, int len, int nonblock)
 
 	dprintk_in();
 
-        write_lump = (p->r->ring->len ? p->r->ring->len >> 1 : (DEFAULT_RING_SIZE) >> 2); //DEFAULT_RING_SIZE >> 2;
+        //write_lump = (len >= p->r->ring->len + sizeof(struct v4v_ring_message_header) + sizeof(struct v4v_stream_header) ? p->r->ring->len >> 1 : (DEFAULT_RING_SIZE) >> 2); //DEFAULT_RING_SIZE >> 2;
+        write_lump = (p->r->ring->len ? p->r->ring->len >> 4 : (DEFAULT_RING_SIZE) >> 2); //DEFAULT_RING_SIZE >> 2;
         //printk(KERN_INFO "write_lump: %#lx\n", write_lump);
 
         switch (p->state) {
@@ -2178,11 +2185,13 @@ static int v4v_connect(struct v4v_private *p, v4v_addr_t * peer, int nonblock)
                         ret = 0;
                         goto out;
                 default:
+			dprintk_info("default\n");
                         ret = -EINVAL;
                         goto out;
                 }
         }
         if (p->ptype != V4V_PTYPE_STREAM) {
+		dprintk_info("!stream\n");
                 ret = -EINVAL;
                 goto out;
         }
@@ -2222,6 +2231,7 @@ static int v4v_connect(struct v4v_private *p, v4v_addr_t * peer, int nonblock)
 		dprintk_info("mpainei sto connected\n");
 
                 if (memcmp(peer, &p->peer, sizeof(v4v_addr_t))) {
+			dprintk_info("!memcmp\n");
                         ret = -EINVAL;
                         goto out;
                 } else {
@@ -2340,7 +2350,7 @@ v4v_accept(struct v4v_private *p, struct v4v_addr *peer, int nonblock)
         /* FIXME: leak! */
         for (;;) {
 		/*jo : trace*/
-		dprintk("%s: entering infinite loop\n", __func__);
+		printk("%s: entering infinite loop\n", __func__);
                 ret =
                     wait_event_interruptible(p->readq,
                                              (!list_empty
@@ -2628,7 +2638,7 @@ v4v_recvfrom(struct v4v_private * p, void *buf, size_t len, int flags,
         }
 
         if ((rc > (ssize_t) len) && !(flags & MSG_TRUNC)) {
-		dprintk_info("if clause, rc = len\n");
+		printk("if clause, rc = len\n");
                 rc = len;
 	}
 

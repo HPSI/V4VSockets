@@ -110,18 +110,19 @@ void print_msg_header(struct v4v_ring *r, struct v4v_ring_message_header *mh)
 	uint32_t len = mh->len;
 	v4v_addr_t *source = &mh->source;
 	uint32_t message_type = mh->message_type;
-	uint8_t *data = mh->data;
+	//uint8_t *data = mh->data;
 	int i;
 #if 0
 	char *p = kmalloc(r->len + 1, GFP_ATOMIC);
 #endif
 
 
+	dprintk_in();
 	printk(KERN_INFO "len = %#x\n", len);
 	printk(KERN_INFO "source.domain = %#x\n", source->domain);
 	printk(KERN_INFO "source.port = %#x\n", source->port);
 	printk(KERN_INFO "message_type = %#x\n", message_type);
-	printk(KERN_INFO "data = %p\n", data);
+	//printk(KERN_INFO "data = %p\n", data);
 #if 0
 	memcpy(p, &r->ring[0], 4096);
 	for (i =0; i<4096; i++) {
@@ -132,6 +133,7 @@ void print_msg_header(struct v4v_ring *r, struct v4v_ring_message_header *mh)
 	p[4096] = '\0';
 	printk(KERN_INFO "%s\n", p);
 #endif
+	dprintk_out();
 }  
 #endif
 
@@ -143,15 +145,39 @@ v4v_ring_bytes_to_read (volatile struct v4v_ring *r)
 	dprintk_in();
 
         ret = r->tx_ptr - r->rx_ptr;
-        dprintk("tx= %#x, rx= %#x, ret = %d \n", (unsigned long)r->tx_ptr, (unsigned long)r->rx_ptr, ret);
+        //dprintk("tx= %#x, rx= %#x, ret = %d \n", (unsigned long)r->tx_ptr, (unsigned long)r->rx_ptr, ret);
+	//printk("%s: r->rx_ptr:%#lx, r->tx_ptr:%#lx\n", __func__, r->rx_ptr, r->tx_ptr);
         if (ret < 0)
                 ret += r->len;
 
+	//printk("%s: r->rx_ptr:%#lx, r->tx_ptr:%#lx\n", __func__, r->rx_ptr, r->tx_ptr);
 	dprintk_out();
 
         return (uint32_t) ret;
 }
 
+static V4V_INLINE uint32_t update_rx_ptr(volatile struct v4v_ring *r, int32_t value)
+{
+	int32_t rxp;
+	int32_t ret;
+	dprintk_in();
+
+	rxp = r->rx_ptr;
+	//printk("%s: rxp:%#lx, r->rx_ptr:%#lx, r->tx_ptr:%#lx, value:%#lx\n", __func__, rxp, r->rx_ptr, r->tx_ptr, value);
+	rxp = value;
+        if (rxp >= r->len)
+                rxp -= r->len;
+
+	ret = rxp - r->rx_ptr;
+        if (ret < 0)
+                ret += r->len;
+
+	r->rx_ptr = rxp;
+	mb();
+	dprintk_out();
+
+	return (uint32_t) ret;
+}
 
 /*
  * Copy at most t bytes of the next message in the ring, into the buffer
@@ -176,8 +202,8 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
 
 	dprintk_in();
 
+        //printk("enter: rxp:%#lx rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx, btr:%#x\n", rxp, r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t, btr);
 #if 0
-        //printk("enter: rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx, btr:%#x\n", r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t, btr);
         if (rxp == r->len) {
 		printk("rxp:%#x == r->len:%#x, tx_ptr: %#lx, t:%#lx, consume:%d, btr:%#x", rxp, r->len, r->tx_ptr, t, consume, btr);
         	//dprintk_err("rx = %#x, tx = %#x\n", r->rx_ptr, r->tx_ptr);
@@ -193,7 +219,7 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
         if (btr < sizeof (*mh)) {
 		dprintk_err("not enough bytes to read for the header: %#x < %#x\n", btr, sizeof(*mh));
         	dprintk_err("rx = %#x, tx = %#x t:%#lx, consume:%d\n", r->rx_ptr, r->tx_ptr, t, consume);
-		v4v_hexdump(&r->ring[rxp], 0x40);
+		//v4v_hexdump(&r->ring[rxp], 0x40);
                 ret = -1;
                 goto out;
         }
@@ -214,17 +240,20 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
 		ret = -1;
 		goto out;
 	}
+	//printk("before mh->len\n");
         len = mh->len;
+	//printk("after: mh->len\n");
         
         if (btr < len || !len)
         {
 		//dump_ring(r);
 		dprintk_err("not enough bytes to read for the message: %#x < %#x\n", btr, len);
         	dprintk_err("rx = %#x, tx = %#x t:%#lx, consume:%d\n", r->rx_ptr, r->tx_ptr, t, consume);
-		v4v_hexdump(&r->ring[rxp], 0x40);
+		//v4v_hexdump(&r->ring[rxp], 0x40);
 		ret = -1;
 		goto out;
         }
+	//printk("after:check\n");
 
 #if defined(__GNUC__)
         if (from) 
@@ -234,15 +263,16 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
         if (from)
                 memcpy((void *) from, (void *) &(mh->source), sizeof(struct v4v_addr));
 #endif
+	//printk("after:from\n");
 
-        dprintk("port=%i, domain= %i\n", from->port, from->domain);
+        //if (from) dprintk("port=%i, domain= %i\n", from->port, from->domain);
         if (protocol)
                 *protocol = mh->message_type;
 
         rxp += sizeof (*mh);
-        if (rxp == r->len) {
-		//printk("rxp:%#x == r->len:%#x, t:%#lx, consume:%d", rxp, r->len, t, consume);
-                rxp = 0;
+        if (rxp >= r->len) {
+		//printk(":%d: rxp:%#x r->rx_ptr:%#lx, r->len:%#x, t:%#lx, consume:%d", __LINE__, rxp, r->rx_ptr, r->len, t, consume);
+                rxp -= r->len;
 	}
         len -= sizeof (*mh);
         ret = len;
@@ -251,6 +281,11 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
 	
 	dprintk("rxp = %#x, bte = %#x, btr = %#x, len = %#x, t = %#lx\n", rxp, bte, btr, len, t);
 
+#if 0
+	if (consume == 0 && t == 8) {
+	    v4v_hexdump(&r->ring[rxp], t);
+	}
+#endif
         if (bte < len)
         {
                 if (t < bte)
@@ -265,9 +300,9 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
                                 buf += t;
                         }
 
+                        //rxp += t;
                         rxp = 0;
-                        //rxp = sizeof(v4v_ring_t);
-                        len -= t;
+                        len -= bte;
                         t = 0;
 			dprintk("t<bte rxp = %#x = 0, len = %#x\n", rxp, len);
                 }
@@ -305,12 +340,13 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
 	
 	//printk("len before round up len = %li, rxp = %li, r->len = %li, round loss = %li", (unsigned long)len, (unsigned long)rxp, (unsigned long)r->len, V4V_ROUNDUP (len) - len);
         
-	//rxp += V4V_ROUNDUP (len);
+	rxp += (len);
 	/*jo magic*/
-	rxp += len;
+	//rxp += len;
+	//printk("%d: rxp:%#x == r->len:%#x, t:%#lx, consume:%d, btr:%#x\n", __LINE__, rxp, r->len, t, consume, btr);
 	/*jo magic end*/
-        if (V4V_ROUNDUP(rxp) == r->len) {
-	//	printk("%s: rxp:%#x == r->len:%#x, t:%#lx, consume:%d, btr:%#x", __LINE__, rxp, r->len, t, consume, btr);
+        if (rxp == r->len) {
+		//printk("%d: rxp:%#x == r->len:%#x, t:%#lx, consume:%d, btr:%#x\n", __LINE__, rxp, r->len, t, consume, btr);
 	//	printk("rxp tinkering: rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx\n", r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t);
                 rxp = 0;
 	}
@@ -318,21 +354,32 @@ v4v_copy_out (struct v4v_ring *r, struct v4v_addr *from, uint32_t * protocol,
 	//printk("after round up rxp = %li, rx = %li\n", (unsigned long)rxp, (unsigned long)r->rx_ptr);
         mb ();
 
+#if 0
+	if (V4V_ROUNDUP(rxp) != rxp) {
+		printk("roundup'd rxp = %#lx,  rxp = %#lx\n", V4V_ROUNDUP(rxp), rxp);
+	}
+	if (V4V_ROUNDUP(r->rx_ptr) != r->rx_ptr) {
+		printk("roundup'd rx_ptr = %#lx,  rx_ptr = %#lx\n", V4V_ROUNDUP(r->rx_ptr), r->rx_ptr);
+	}
+#endif
         if (consume){
 		//printk("%s: In consume rxp = %li\n", __func__, (unsigned long)rxp); 
 		/*!jo magic*/
 	        //r->rx_ptr = rxp;
-	//	printk("consume before roundup: rxp:%#lx, rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx\n", rxp, r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t);
-		r->rx_ptr = V4V_ROUNDUP(rxp);
+		//printk("consume before roundup: rxp:%#lx, rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx\n", rxp, r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t);
+	        //r->rx_ptr = V4V_ROUNDUP(rxp);
+		//printk (KERN_INFO "consumed: %#lx, asked for: %#lx\n", add_to_rx_ptr(r, V4V_ROUNDUP(rxp)), t);
+		int blah = update_rx_ptr(r, V4V_ROUNDUP(rxp));
+		//int blah = add_to_rx_ptr(r, rxp);
 		/*jo magic end*/
-	//	printk("consume: rxp:%#lx rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx\n", rxp, r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t);
+		//printk("consume: rxp:%#lx rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx\n", rxp, r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t);
 		dprintk("%s: In consume rx = %li (ROUNDUP loss: %li\n", __func__, (unsigned long)r->rx_ptr, V4V_ROUNDUP(rxp) - rxp);
 	}
 
         dprintk("buf: %p, from: %p\n", (buf ? buf : 0), (from ? from : 0));
 out:
 	dprintk("ret:%#x rx = %#x, tx = %#x", ret, r->rx_ptr, r->tx_ptr);
-	//printk("exit: rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx\n", r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t);
+//	printk("exit: rxp:%#lx, rx = %#x, tx = %#x t:%#lx, consume:%d, total=%#lx\n", rxp, r->rx_ptr, r->tx_ptr, t, consume, r->rx_ptr + t);
 
 	dprintk_out();
 	//v4v_hexdump(buf, ret);
