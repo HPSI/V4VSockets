@@ -53,11 +53,14 @@
 #include <linux/miscdevice.h>
 #include <linux/major.h>
 #include <linux/proc_fs.h>
+#include <net/sock.h>
+#include <net/tcp_states.h>
 #include <linux/poll.h>
 #include <linux/random.h>
 #include <linux/wait.h>
 #include <linux/file.h>
 #include <linux/mount.h>
+
 
 //#include <xen/interface/v4v.h>
 //#include <xen/v4vdev.h>
@@ -68,7 +71,7 @@
 
 unsigned long start = 0, stop = 0, total=0;
 #define DEFAULT_RING_SIZE \
-    (V4V_ROUNDUP((((PAGE_SIZE)*1024) - sizeof(v4v_ring_t)-V4V_ROUNDUP(1))))
+    (V4V_ROUNDUP((((PAGE_SIZE)*32) - sizeof(v4v_ring_t)-V4V_ROUNDUP(1))))
 
 /* The type of a ring*/
 typedef enum {
@@ -98,6 +101,31 @@ static rwlock_t list_lock;
 static struct list_head ring_list;
 
 struct v4v_private;
+
+
+
+struct v4v_sock {
+  struct sock             sk;
+  unsigned char           is_server, is_client;
+  domid_t                 otherend_id;
+  struct v4v_ring_id      ring_id;
+  struct sockaddr_v4v     local_addr;
+  struct sockaddr_v4v     remote_addr;
+  struct descriptor_page *descriptor_addr;    /* server and client */
+  int                     descriptor_gref;    /* server only */
+  struct vm_struct       *descriptor_area;    /* client only */
+  grant_handle_t          descriptor_handle;  /* client only */
+  unsigned int            evtchn_local_port;
+  unsigned int            irq;
+  unsigned long           buffer_addr;    /* server and client */
+  int                    *buffer_grefs;   /* server */
+  struct vm_struct       *buffer_area;    /* client */
+  grant_handle_t         *buffer_handles; /* client */
+  int                     buffer_order;
+  /* v4v_private_data */
+  struct v4v_private     *priv_data;
+};
+
 
 /*
  * Ring pointer itself is protected by the refcnt the lists its in by list_lock.
@@ -175,6 +203,21 @@ struct pending_xmit {
         uint32_t protocol;
         uint8_t data[0];
 };
+static void dump_sockaddr(struct sockaddr_v4v *addr)
+{
+	dprintk("family:%#lx, domain:%#lx, port:%#lx\n", addr->sa_family, addr->domain, addr->port);
+}
+
+static void dump_socket(struct socket *sock)
+{
+	dprintk("state:%#lx\n", sock->state);
+	dprintk("type:%#x\n", sock->type);
+	dprintk("flags:%#lx\n", sock->flags);
+	dprintk("file:%p\n", sock->file);
+	dprintk("sk:%p\n", sock->sk);
+	dprintk("ops:%p\n", sock->ops);
+}
+
 
 #define MAX_PENDING_RECVS        16
 
@@ -589,6 +632,7 @@ static void delete_ring(struct ring *r)
 {
         int ret;
 
+	dprintk_in();
         list_del(&r->node);
 
         if ((ret = unregister_ring(r))) {
@@ -601,52 +645,74 @@ static void delete_ring(struct ring *r)
 
         kfree(r->pfn_list);
         kfree(r);
+	dprintk_out();
 }
 
 /* Returns !0 if you sucessfully got a reference to the ring */
 static int get_ring(struct ring *r)
 {
-        return atomic_add_unless(&r->refcnt, 1, 0);
+	int ret;	
+	dprintk_in();
+        ret = atomic_add_unless(&r->refcnt, 1, 0);
+	dprintk_out();
+	return ret;
 }
 
 /* Must be called with DEBUG_WRITELOCK; v4v_write_lock */
 static void put_ring(struct ring *r)
 {
-        if (!r)
-                return;
+	dprintk_in();
+        if (!r) {
+		printk(KERN_INFO "RING DOES NOT EXIST\n");
+                goto out;
+	}
 
         if (atomic_dec_and_test(&r->refcnt)) {
+		dprintk("delete_ring:%p\n", r);
                 delete_ring(r);
         }
+out:
+	dprintk_out();
+	return;
 }
 
 /* Caller must hold ring_lock */
 static struct ring *find_ring_by_id(struct v4v_ring_id *id)
 {
-        struct ring *r;
+        struct ring *r, *p = NULL;
 
+	dprintk_in();
         list_for_each_entry(r, &ring_list, node) {
                 if (!memcmp
-                    ((void *)&r->ring->id, id, sizeof(struct v4v_ring_id)))
-                        return r;
+                    ((void *)&r->ring->id, id, sizeof(struct v4v_ring_id))){
+			p = r;
+                        goto out;
+		}
         }
-        return NULL;
+out:
+	dprintk_out();
+        return p;
 }
 
 /* Caller must hold ring_lock */
 struct ring *find_ring_by_id_type(struct v4v_ring_id *id, v4v_rtype t)
 {
-        struct ring *r;
+        struct ring *r, *p = NULL;
 
+	dprintk_in();
         list_for_each_entry(r, &ring_list, node) {
                 if (r->type != t)
                         continue;
                 if (!memcmp
-                    ((void *)&r->ring->id, id, sizeof(struct v4v_ring_id)))
-                        return r;
+                    ((void *)&r->ring->id, id, sizeof(struct v4v_ring_id))) {
+                        p = r;
+			goto out;
+		}
         }
 
-        return NULL;
+out:
+	dprintk_out();
+        return p;
 }
 
 /* Pending xmits */
@@ -1278,7 +1344,6 @@ static int listener_interrupt(struct ring *r)
 
         list_for_each_entry(p, &r->privates, node) {
 		dprintk("list for each, p->conid:%#lx, sh.conid:%#lx\n", p->conid, sh.conid);
-		//v4v_hexdump(&sh, sizeof(sh));
                 if ((p->conid == sh.conid)
                     && (!memcmp(&p->peer, &from, sizeof(v4v_addr_t)))) {
                         ret = acceptor_interrupt(p, r, &sh, msg_len);
@@ -1963,14 +2028,15 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                                                    struct pending_recv, node);
 
                         if ((pending->data_len - pending->data_ptr) > len) {
-				//printk(KERN_INFO "len: %#lx, data: %#lx, data_ptr:%p\n", (len), (pending->data_len), (pending->data_ptr));
+				printk(KERN_INFO "len: %#lx, data: %#lx, data_ptr:%p\n", (len), (pending->data_len), (pending->data_ptr));
                                 to_copy = len;
                         } else {
                                 unlink = 1;
                                 to_copy = pending->data_len - pending->data_ptr;
-				//printk(KERN_INFO "unlinked ;-) len: %#lx, data: %#lx, data_ptr:%p\n", (len), (pending->data_len), (pending->data_ptr));
+				printk(KERN_INFO "unlinked ;-) len: %#lx, data: %#lx, data_ptr:%p\n", (len), (pending->data_len), (pending->data_ptr));
                         }
 
+#if 1
                         if (!access_ok(VERIFY_WRITE, buf, to_copy)) {
                                 printk(KERN_ERR
                                        "V4V - ERROR: buf invalid _buf=%p buf=%p len=%d to_copy=%zu count=%zu\n",
@@ -1980,6 +2046,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                                 ret = -EFAULT;
                                 goto unlock;
                         }
+#endif
 
                         dprintk("buf:%#lx, data:%#lx, data_ptr:%#lx, to_copy:%#lx\n",
 			         (unsigned long) buf, (unsigned long) pending->data,
@@ -2112,6 +2179,7 @@ v4v_send_stream(struct v4v_private *p, const void *_buf, int len, int nonblock)
         return count;
 }
 
+
 static int v4v_bind(struct v4v_private *p, struct v4v_ring_id *ring_id)
 {
         int ret = 0;
@@ -2121,6 +2189,7 @@ static int v4v_bind(struct v4v_private *p, struct v4v_ring_id *ring_id)
 	dprintk("domain = %d malakia = %d\n", ring_id->addr.domain, V4V_DOMID_NONE);
 
         if (ring_id->addr.domain != V4V_DOMID_NONE) {
+		dprintk_err("domain_id:%#lx\n", ring_id->addr.domain);
                 ret = -EINVAL;
 		goto out;
         }
@@ -2136,9 +2205,11 @@ static int v4v_bind(struct v4v_private *p, struct v4v_ring_id *ring_id)
         case V4V_PTYPE_STREAM:
                 ret = new_ring(p, ring_id);
                 break;
+	default:
+		dprintk_err("default, type:%#lx\n", p->ptype);
         }
 	/*jo : trace*/
-	dprintk("after registration domain = %d\n",ring_id->addr.domain);
+	dprintk("after registration domain = %d, ret:%d\n",ring_id->addr.domain, ret);
 out:
 	dprintk_out();
         return ret;
@@ -2324,7 +2395,7 @@ static int allocate_fd_with_private(void *private)
         return fd;
 }
 
-static int
+static struct v4v_private * 
 v4v_accept(struct v4v_private *p, struct v4v_addr *peer, int nonblock)
 {
         int fd = -1;
@@ -2337,11 +2408,13 @@ v4v_accept(struct v4v_private *p, struct v4v_addr *peer, int nonblock)
 
         dprintk_in();
         if (p->ptype != V4V_PTYPE_STREAM) {
+                dprintk("private data ptype invalid:%#lx\n", p->ptype);
                 ret = -ENOTTY;
                 goto out;
 	}
 
         if (p->state != V4V_STATE_LISTENING) {
+		dprintk("private data state invalid:%#lx\n", p->state);
                 ret = -EINVAL;
                 goto out;
         }
@@ -2426,11 +2499,13 @@ v4v_accept(struct v4v_private *p, struct v4v_addr *peer, int nonblock)
 	}
 #endif
 
+#if 0
         fd = allocate_fd_with_private(a);
         if (fd < 0) {
                 ret = fd;
                 goto release;
         }
+#endif
 
         write_lock_irqsave(&list_lock, flags);
         list_add(&a->node, &a->r->privates);
@@ -2450,7 +2525,7 @@ v4v_accept(struct v4v_private *p, struct v4v_addr *peer, int nonblock)
 
 out:
         dprintk_out();
-        return fd;
+        return a;
 
  release:
         kfree(r);
@@ -2715,7 +2790,6 @@ static int v4v_release(struct inode *inode, struct file *f)
         struct pending_recv *pending;
         dprintk_in();
 	/*jo : trace*/
-	printk(KERN_INFO "Entering function : %s\n", __func__);
 	printk(KERN_INFO "TIME spent waiting: %lu\n", total);
         if (p->ptype == V4V_PTYPE_STREAM) {
                 switch (p->state) {
@@ -2923,7 +2997,7 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                         rc = -EFAULT;
                         goto out;
                 }
-                rc = v4v_accept(p, (v4v_addr_t *) arg, nonblock);
+                //rc = v4v_accept(p, (v4v_addr_t *) arg, nonblock);
 		dprintk("%s: addr=(port:%#x, domain:%#x), rc:%d\n", v4v_ioctl2text(cmd), port, domain, rc);
                 break;
 	}
@@ -3086,6 +3160,7 @@ static unsigned int v4v_poll(struct file *f, poll_table * pt)
         return mask;
 }
 
+#if 0
 static const struct file_operations v4v_fops_stream = {
         .owner = THIS_MODULE,
         .write = v4v_write,
@@ -3106,6 +3181,7 @@ static const struct file_operations v4v_fops_dgram = {
         .poll = v4v_poll,
 };
 
+#endif
 /* Xen VIRQ */
 static int v4v_irq = -1;
 
@@ -3152,8 +3228,499 @@ out:
         return ret;
 }
 
+
+static int get_ring_id(struct v4v_sock *xs, struct sockaddr *addr, struct v4v_ring_id *ring_id)
+{
+	int ret = 0;
+	struct sockaddr_v4v *sa_v4v = addr;
+	dprintk_in();
+	
+	if (!xs) {
+		ret = -EINVAL;
+		dprintk_err("xs is NULL: %d\n", ret);
+		goto out;
+	}
+	dprintk("addr.port:%#lx, addr.domain:%#lx\n", sa_v4v->port, sa_v4v->domain);
+	ring_id->addr.domain = V4V_DOMID_NONE;
+	ring_id->partner = sa_v4v->domain;
+	ring_id->addr.port= sa_v4v->port;
+out:
+	dprintk_out();
+	return ret;
+}
+
+static struct v4v_private *get_priv_data(struct v4v_sock *xsk)
+{
+	struct v4v_private *priv_data;
+	dprintk_in();
+	priv_data = xsk->priv_data;
+	if (!priv_data) {
+		dprintk_info("null private data\n");
+	}
+	dprintk_out();
+	return priv_data;
+}
+
+static int
+v4v_sock_bind(struct socket *sock, struct sockaddr *addr, int addr_len)
+{
+	int ret = 0;
+        struct sock *sk;
+        struct v4v_sock *xsk;
+	struct v4v_private *priv_data;
+	struct v4v_ring_id ring_id;
+
+	dprintk_in();
+
+	sk = sock->sk;
+	xsk = xen_sk(sk);
+
+	ret = get_ring_id(xsk, addr, &ring_id);
+	if (ret < 0) {
+		ret = -EINVAL;
+		dprintk_err("get_ring_id returned: %d\n", ret);
+	}
+	priv_data = get_priv_data(xsk);
+
+	ret = v4v_bind(priv_data, &ring_id);
+	if (ret < 0) {
+		dprintk_err("v4v_bind returns: %d\n", ret);
+	}
+	if (addr) 
+		dump_sockaddr(addr);
+
+	memcpy(&xsk->local_addr, addr, addr_len);
+	dump_sockaddr(&xsk->local_addr);
+out:
+	dprintk_out();
+	return ret;
+}
+
+
+#if 0
+static int get_sockaddr_v4v(struct *v4v_address, struct sockaddr_v4v *addr)
+{
+	int ret = 0;
+	dprintk_in();
+
+	
+	addr->sa_family = AF_XEN;
+	addr->domain = v4v_address->domain;
+	addr->port = v4v_address->port;
+
+	dprintk("family:%#lx, domain:%#lx, port:%#lx\n", addr->sa_family, addr->domain, addr->port);
+out:
+	dprintk_out();
+	return ret;
+}
+#endif
+
+static int v4v_sock_getname(struct socket *sock,
+			    struct sockaddr *addr, int *addr_len, int peer)
+{
+	int ret;
+        struct sock *sk;
+        struct v4v_sock *xsk;
+	struct sockaddr_v4v *vm_addr;
+
+	dprintk_in();
+        sk = sock->sk;
+        xsk = xen_sk(sk);
+        ret = 0;
+
+	dprintk("sock:%p\n", sock);
+	dprintk("sockaddr:%p\n", addr);
+	dump_socket(sock);
+	
+        //lock_sock(sk);
+
+        if (peer) {
+                if (sock->state != SS_CONNECTED) {
+                        ret = -ENOTCONN;
+                	dprintk_err("sock state is :%d\n", ret);
+                        goto out;
+                }
+                vm_addr = &xsk->local_addr;
+        } else {
+                vm_addr = &xsk->local_addr;
+        }
+
+        if (!vm_addr) {
+                ret = -EINVAL;
+                dprintk_err("v4v_addr is NULL:%d\n", ret);
+                goto out;
+        }
+#if 0
+	ret = get_sockaddr_v4v(v4v_address, &vm_addr);
+	if (ret < 0) {
+                ret = -EINVAL;
+                dprintk_err("v4v_addr is NULL:%d\n", ret);
+                goto out;
+	}
+#endif
+
+        /* sys_getsockname() and sys_getpeername() pass us a
+         * MAX_SOCK_ADDR-sized buffer and don't set addr_len.  Unfortunately
+         * that macro is defined in socket.c instead of .h, so we hardcode its
+         * value here.
+         */
+        BUILD_BUG_ON(sizeof(*vm_addr) > 128);
+        memcpy(addr, vm_addr, sizeof(struct sockaddr));
+        *addr_len = sizeof(struct sockaddr);
+	if (addr) {
+	    dump_sockaddr(addr);
+	}
+
+out:
+	//release_sock(sk);
+	dprintk("returns:%d\n", ret);
+	dprintk_out();
+	return ret;
+}
+
+static int v4v_sock_shutdown(struct socket *sock, int mode)
+{
+	int ret = 0;
+        struct sock *sk;
+
+	dprintk_in();
+        /* User level uses SHUT_RD (0) and SHUT_WR (1), but the kernel uses
+         * RCV_SHUTDOWN (1) and SEND_SHUTDOWN (2), so we must increment mode
+         * here like the other address families do.  Note also that the
+         * increment makes SHUT_RDWR (2) into RCV_SHUTDOWN | SEND_SHUTDOWN (3),
+         * which is what we want.
+         */
+        mode++;
+
+        if ((mode & ~SHUTDOWN_MASK) || !mode) {
+                ret = -EINVAL;
+                goto out;
+	}
+
+        /* If this is a STREAM socket and it is not connected then bail out
+         * immediately.  If it is a DGRAM socket then we must first kick the
+         * socket so that it wakes up from any sleeping calls, for example
+         * recv(), and then afterwards return the error.
+         */
+
+        sk = sock->sk;
+        if (sock->state == SS_UNCONNECTED) {
+                ret = -ENOTCONN;
+                if (sk->sk_type == SOCK_STREAM) {
+			goto out;
+		}
+        } else {
+                sock->state = SS_DISCONNECTING;
+                ret = 0;
+        }
+
+        /* Receive and send shutdowns are treated alike. */
+        mode = mode & (RCV_SHUTDOWN | SEND_SHUTDOWN);
+        if (mode) {
+                //lock_sock(sk);
+                sk->sk_shutdown |= mode;
+                sk->sk_state_change(sk);
+                //release_sock(sk);
+
+                if (sk->sk_type == SOCK_STREAM) {
+                        sock_reset_flag(sk, SOCK_DONE);
+                        //vsock_send_shutdown(sk, mode);
+                }
+        }
+
+out:
+	dprintk_out();
+	return ret;
+}
+
+static unsigned int v4v_sock_poll(struct file *file, struct socket *sock,
+				  poll_table * wait)
+{
+	unsigned int ret = 0;
+	dprintk_in();
+out:
+	dprintk_out();
+	return ret;
+}
+
+static int v4v_sock_stream_recvmsg(struct kiocb *kiocb, struct socket *sock,
+				   struct msghdr *msg, size_t len, int flags)
+{
+	int ret = 0;
+
+        struct sock *sk;
+        struct v4v_sock *xsk;
+	int nonblock = flags & O_NONBLOCK;
+
+	dprintk_in();
+
+	sk = sock->sk;
+	xsk = xen_sk(sk);
+	ret = v4v_recv_stream(xsk->priv_data, msg->msg_iov->iov_base, msg->msg_iov->iov_len, flags, nonblock);
+	v4v_hexdump(msg->msg_iov->iov_base, msg->msg_iov->iov_len);
+	if (ret < 0) {
+		dprintk_err("recv_stream error, msg: %p, len:%#lx\n", msg, len);
+	}
+out:
+	dprintk_out();
+	return ret;
+}
+
+static void v4v_sock_connect_timeout(struct work_struct *work)
+{
+	dprintk_in();
+
+	dprintk_out();
+}
+
+static int v4v_sock_stream_connect(struct socket *sock, struct sockaddr *addr,
+				   int addr_len, int flags)
+{
+	int ret = 0;
+        struct sock *sk;
+        struct v4v_sock *xsk;
+	struct sockaddr_v4v *vm_addr = addr;
+	int nonblock = flags & O_NONBLOCK;
+	struct v4v_private *priv_data;
+	v4v_addr_t v4v_address;
+
+	dprintk_in();
+	sk = sock->sk;
+	xsk = xen_sk(sk);
+	
+	v4v_address.domain = vm_addr->domain;
+	v4v_address.port = vm_addr->port;
+
+	priv_data = get_priv_data(xsk);
+	ret = v4v_connect(priv_data, &v4v_address, nonblock);
+	if (ret < 0) {
+		dprintk("connect returns:%d\n", ret);
+		goto out;
+	}
+	
+out:
+	dprintk_out();
+	return ret;
+}
+
+#define SS_LISTEN 255
+#if 0
+void v4v_sock_enqueue_accept(struct sock *listener, struct sock *connected)
+{
+        struct v4v_sock *vlistener;
+        struct v4v_sock *vconnected;
+
+        vlistener = xen_sk(listener);
+        vconnected = xen_sk(connected);
+
+        sock_hold(connected);
+        sock_hold(listener);
+        list_add_tail(&vconnected->accept_queue, &vlistener->accept_queue);
+}
+
+static struct sock *v4v_sock_dequeue_accept(struct sock *listener)
+{
+        struct v4v_sock *vlistener;
+        struct v4v_sock *vconnected;
+
+        vlistener = xen_sk(listener);
+
+        if (list_empty(&vlistener->accept_queue))
+                return NULL;
+
+        vconnected = list_entry(vlistener->accept_queue.next,
+                                struct v4v_sock, accept_queue);
+
+        list_del_init(&vconnected->accept_queue);
+        sock_put(listener);
+        /* The caller will need a reference on the connected socket so we let
+         * it call sock_put().
+         */
+
+        return sk_v4v_sock(vconnected);
+}
+#endif
+
+static int v4v_sock_accept(struct socket *sock, struct socket *newsock,
+			   int flags)
+{
+	int ret = 0;
+        struct sock *listener;
+
+        struct sock *sk, *new_sk;
+        struct v4v_sock *xsk, *new_xsk;
+	v4v_addr_t *vm_addr;
+	int nonblock = flags & O_NONBLOCK;
+	struct v4v_private *priv_data;
+	v4v_addr_t v4v_address;
+
+	dprintk_in();
+	sk = sock->sk;
+	xsk = xen_sk(sk);
+
+        listener = sock->sk;
+
+	dprintk_info("before lock\n");
+        lock_sock(listener);
+	dprintk_info("after lock\n");
+	
+        if (sock->type != SOCK_STREAM) {
+		dprintk("sock type invalid:%#lx\n", sock->type);
+                ret = -EOPNOTSUPP;
+                goto out;
+        }
+
+        if (listener->sk_state != SS_LISTEN) {
+		dprintk("sock state invalid:%#lx\n", listener->sk_state);
+                ret = -EINVAL;
+                goto out;
+        }
+
+	//v4v_address.domain = vm_addr->domain;
+	//v4v_address.port = vm_addr->port;
+
+
+	priv_data = get_priv_data(xsk);
+
+	dump_socket(sock);
+	dump_socket(newsock);
+#if 1
+	//newsock->sk = 
+	new_sk = kmalloc(sizeof(struct v4v_sock), GFP_ATOMIC);
+	sock_init_data(newsock, new_sk);
+	new_xsk = xen_sk(new_sk);
+	new_xsk->priv_data = v4v_accept(priv_data, &v4v_address, nonblock);
+	if (!new_xsk->priv_data) {
+		ret = -EINVAL;
+		dprintk("accept returns:%d\n", ret);
+		goto out;
+	}
+	memcpy(&new_xsk->local_addr, &xsk->local_addr, sizeof(struct sockaddr));
+	dprintk_info("before graft\n");
+	newsock->state = SS_CONNECTED;
+	sock_graft(new_sk, newsock);
+	dprintk_info("after graft\n");
+	dump_socket(sock);
+	dump_socket(newsock);
+	dump_sockaddr(&xsk->local_addr);
+	dump_sockaddr(&new_xsk->local_addr);
+	
+#endif
+out:
+	dprintk_info("before release\n");
+	release_sock(listener);
+	dprintk_info("after release\n");
+	dprintk("accept returns:%d\n", ret);
+	dprintk_out();
+	return ret;
+}
+
+static int v4v_sock_listen(struct socket *sock, int backlog)
+{
+	int ret = 0;
+        struct sock *sk;
+        struct v4v_sock *xsk;
+	struct v4v_private *priv_data;
+	dprintk_in();
+
+        sk = sock->sk;
+
+        //lock_sock(sk);
+
+        if (sock->type != SOCK_STREAM) {
+		dprintk("sock type invalid:%#lx\n", sock->type);
+                ret = -EOPNOTSUPP;
+                goto out;
+        }
+
+        if (sock->state != SS_UNCONNECTED) {
+		dprintk("sock state invalid:%#lx\n", sock->state);
+                ret = -EINVAL;
+                goto out;
+        }
+
+        xsk = xen_sk(sk);
+	priv_data = get_priv_data(xsk);
+
+#if 0 /* FIXME */
+        if (!vsock_addr_bound(&vsk->local_addr)) {
+                err = -EINVAL;
+                goto out;
+        }
+#endif
+
+        //sk->sk_max_ack_backlog = backlog;
+        sk->sk_state = SS_LISTEN;
+	ret = v4v_listen(priv_data);
+
+        ret = 0;
+
+out:
+        //release_sock(sk);
+	dprintk_out();
+	return ret;
+}
+
+static int v4v_sock_stream_setsockopt(struct socket *sock, int level,
+				      int optname, char __user * optval,
+				      unsigned int optlen)
+{
+	int ret = 0;
+	dprintk_in();
+out:
+	dprintk_out();
+	return ret;
+}
+
+static int v4v_sock_stream_getsockopt(struct socket *sock, int level,
+				      int optname, char __user * optval,
+				      int __user * optlen)
+{
+	int ret = 0;
+	dprintk_in();
+out:
+	dprintk_out();
+	return ret;
+}
+
+static void dump_msghdr(struct msghdr *m)
+{
+	struct msghdr msg;
+	struct iovec iov;
+
+	memcpy(&msg, m, sizeof(*m));
+	memcpy(&iov, m->msg_iov, sizeof(iov));
+
+        dprintk("iov.iov_base:%p\n", iov.iov_base);
+        dprintk("iov.iov_len :%#lx\n", iov.iov_len);
+        dprintk("msg_name %p\n", msg.msg_name);
+        dprintk("msg_iov %p\n", msg.msg_iov);
+        dprintk("msg_iov %#lx\n", msg.msg_iovlen);
+        dprintk("msg_flags:%#lx\n", msg.msg_flags);
+
+
+}
+
+static int v4v_sock_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
+				   struct msghdr *msg, size_t len)
+{
+	int ret = 0;
+        struct sock *sk;
+        struct v4v_sock *xsk;
+
+	dprintk_in();
+	dump_msghdr(msg);
+
+	sk = sock->sk;
+	xsk = xen_sk(sk);
+	ret = v4v_send_stream(xsk->priv_data, msg->msg_iov->iov_base, msg->msg_iov->iov_len, 0);
+out:
+	dprintk_out();
+	return ret;
+}
 /* V4V Device */
 
+#if 0
 static struct miscdevice v4v_miscdev_dgram = {
         .minor = MISC_DYNAMIC_MINOR,
         .name = "v4v_dgram",
@@ -3165,7 +3732,9 @@ static struct miscdevice v4v_miscdev_stream = {
         .name = "v4v_stream",
         .fops = &v4v_fops_stream,
 };
+#endif
 
+#if 0
 static int v4v_suspend(struct platform_device *dev, pm_message_t state)
 {
         unbind_virq();
@@ -3195,8 +3764,10 @@ static int v4v_resume(struct platform_device *dev)
         return 0;
 }
 
+#endif
 static void v4v_shutdown(struct platform_device *dev)
 {
+
 }
 
 static int v4v_probe(struct platform_device *dev)
@@ -3223,6 +3794,7 @@ static int v4v_probe(struct platform_device *dev)
                 goto out;
         }
 
+#if 0
         err = misc_register(&v4v_miscdev_dgram);
         if (err != 0) {
                 printk(KERN_ERR "Could not register /dev/v4v_dgram\n");
@@ -3239,6 +3811,7 @@ static int v4v_probe(struct platform_device *dev)
                 goto out;
         }
 
+#endif
         printk(KERN_INFO "Xen V4V device installed.\n");
 out:
         dprintk_out();
@@ -3253,8 +3826,8 @@ static int v4v_remove(struct platform_device *dev)
         dprintk_in();
 
         unbind_virq();
-        misc_deregister(&v4v_miscdev_dgram);
-        misc_deregister(&v4v_miscdev_stream);
+        //misc_deregister(&v4v_miscdev_dgram);
+        //misc_deregister(&v4v_miscdev_stream);
         unsetup_fs();
 
         dprintk_out();
@@ -3262,6 +3835,7 @@ static int v4v_remove(struct platform_device *dev)
         return 0;
 }
 
+#if 0
 static struct platform_driver v4v_driver = {
         .driver = {
                    .name = "v4v",
@@ -3275,6 +3849,267 @@ static struct platform_driver v4v_driver = {
 };
 
 static struct platform_device *v4v_platform_device;
+#endif
+
+/* Notes for implementing recvmsg:
+ * ===============================
+ * msg->msg_namelen should get updated by the recvmsg handlers
+ * iff msg_name != NULL. It is by default 0 to prevent
+ * returning uninitialized memory to user space.  The recvfrom
+ * handlers can assume that msg.msg_name is either NULL or has
+ * a minimum size of sizeof(struct sockaddr_storage).
+ */
+int my_mmap(struct file *file, struct socket *sock, struct vm_area_struct *vma)
+{
+	return 0;
+}
+ssize_t my_sendpage(struct socket *sock, struct page *page,
+		    int offset, size_t size, int flags)
+{
+	return 0;
+}
+ssize_t my_splice_read(struct socket *sock, loff_t * ppos,
+		       struct pipe_inode_info *pipe, size_t len,
+		       unsigned int flags)
+{
+	return 0;
+}
+int my_set_peek_off(struct sock *sk, int val)
+{
+	return 0;
+}
+int my_init_sock(struct sock *sk, int val)
+{
+	return 0;
+}
+int my_disconnect(struct sock *sk, int val)
+{
+	return 0;
+}
+
+/* Socket stuff */
+static struct proto v4v_proto = {
+	.name = "AF_XEN",
+	.owner = THIS_MODULE,
+	.obj_size = sizeof(struct v4v_sock),
+	//.connect = v4v_sock_stream_connect,
+	//.disconnect = my_disconnect,
+	//.accept = v4v_sock_accept,
+	//.ioctl = my_ioctl,
+	//.init = my_init_sock,
+	//.shutdown = my_shutdown,
+	//.setsockopt = v4v_sock_stream_setsockopt,
+	//.getsockopt = v4v_sock_stream_getsockopt,
+	//.sendmsg = v4v_sock_stream_sendmsg,
+	//.recvmsg = v4v_sock_stream_recvmsg,
+	//.unhash = my_unhash,
+	//.get_port = my_get_port,
+	//.enter_memory_pressure = my_enter_memory_pressure,
+	//.sockets_allocated = &sockets_allocated,
+	//.memory_allocated = &memory_allocated,
+	//.memory_pressure = &memory_pressure,
+	//.orphan_count = &orphan_count,
+	//.sysctl_mem = sysctl_tcp_mem,
+	//.sysctl_wmem = sysctl_tcp_wmem,
+	//.sysctl_rmem = sysctl_tcp_rmem,
+	.max_header = 0,
+};
+
+static int v4v_sock_release (struct socket *sock)
+{
+	struct sock *sk;
+	struct v4v_sock *xsk;
+	struct v4v_private *priv_data;
+        struct v4v_private *p;
+        unsigned long flags;
+        struct pending_recv *pending;
+
+        dprintk_in();
+
+	printk(KERN_INFO "%s: releasing sock:%p\n", __func__, sock);
+	sk = sock->sk;
+	if (!sk) {
+		printk(KERN_INFO "%s: socket is null ;-)\n", __func__);
+		goto out;
+	}
+	xsk = xen_sk(sk);
+	priv_data = get_priv_data(xsk);
+	p = priv_data;
+        /*jo : trace*/
+        if (p->ptype == V4V_PTYPE_STREAM) {
+                switch (p->state) {
+                case V4V_STATE_CONNECTED:
+                case V4V_STATE_CONNECTING:
+                case V4V_STATE_ACCEPTED:
+                        xmit_queue_rst_to(&p->r->ring->id, p->conid, &p->peer);
+                        break;
+                default:
+                        break;
+                }
+        }
+
+        write_lock_irqsave(&list_lock, flags);
+        if (!p->r) {
+                write_unlock_irqrestore(&list_lock, flags);
+                goto release;
+        }
+
+        if (p != p->r->sponsor) {
+                put_ring(p->r);
+                list_del(&p->node);
+                write_unlock_irqrestore(&list_lock, flags);
+                goto release;
+        }
+
+        p->r->sponsor = NULL;
+        put_ring(p->r);
+        write_unlock_irqrestore(&list_lock, flags);
+
+        while (!list_empty(&p->pending_recv_list)) {
+                pending =
+                    list_first_entry(&p->pending_recv_list,
+                                     struct pending_recv, node);
+
+                list_del(&pending->node);
+                kfree(pending);
+                atomic_dec(&p->pending_recv_count);
+        }
+
+release:
+        kfree(p);
+
+out:
+        dprintk_out();
+        return 0;
+}
+
+static const struct proto_ops v4v_stream_ops = {
+	.family = PF_XEN,
+	.owner = THIS_MODULE,
+	.release = v4v_sock_release,
+	.bind = v4v_sock_bind,
+	.connect = v4v_sock_stream_connect,
+	.socketpair = sock_no_socketpair,
+	.accept = v4v_sock_accept,
+	.getname = v4v_sock_getname,
+	.poll = v4v_sock_poll,
+	.ioctl = sock_no_ioctl,
+	.listen = v4v_sock_listen,
+	.shutdown = v4v_sock_shutdown,
+	.getsockopt = v4v_sock_stream_getsockopt,
+	.setsockopt = v4v_sock_stream_setsockopt,
+	.sendmsg= v4v_sock_stream_sendmsg,
+	.recvmsg = v4v_sock_stream_recvmsg,
+	.mmap = sock_no_mmap,
+	.sendpage = sock_no_sendpage,
+};
+
+static void initialize_v4v_sock(struct v4v_sock *x)
+{
+	struct v4v_private *p;
+
+	dprintk_in();
+
+	x->is_server = 0;
+	x->is_client = 0;
+	x->otherend_id = -1;
+	x->descriptor_addr = NULL;
+	x->descriptor_gref = -ENOSPC;
+	x->descriptor_area = NULL;
+	x->descriptor_handle = -1;
+	x->evtchn_local_port = -1;
+	x->irq = -1;
+	x->buffer_addr = 0;
+	x->buffer_area = NULL;
+	x->buffer_handles = NULL;
+	x->buffer_order = -1;
+
+        p = kmalloc(sizeof(struct v4v_private), GFP_KERNEL);
+        if (!p)
+                return -ENOMEM;
+	total = 0;
+
+        memset(p, 0, sizeof(struct v4v_private));
+        p->state = V4V_STATE_IDLE;
+        p->desired_ring_size = DEFAULT_RING_SIZE;
+        p->r = NULL;
+        p->ptype = V4V_PTYPE_STREAM;
+        p->send_blocked = 0;
+
+        init_waitqueue_head(&p->readq);
+        init_waitqueue_head(&p->writeq);
+
+        spin_lock_init(&p->pending_recv_lock);
+        INIT_LIST_HEAD(&p->pending_recv_list);
+        atomic_set(&p->pending_recv_count, 0);
+
+        x->priv_data = p;
+
+	dprintk_out();
+}
+
+static int v4v_sock_create(struct net *net, struct socket *sock,
+                        int protocol, int kern)
+{
+	int rc = 0;
+	struct sock *sk;
+	struct v4v_sock *x;
+
+	dprintk_in();
+
+        if (!sock) {
+		printk(KERN_ERR "%s: sock is null\n", __func__);
+                rc = -EINVAL;
+		goto out;
+	}
+
+	printk("%s: !protocol \n", __func__);
+#if 0
+        if (protocol && protocol != PF_XEN) {
+		printk("%s: !protocol \n", __func__);
+                return -EPROTONOSUPPORT;
+	}
+#endif
+
+        switch (sock->type) {
+        case SOCK_DGRAM:
+		printk("%s: \n", __func__);
+                sock->ops = &v4v_stream_ops;
+                break;
+        case SOCK_STREAM:
+                sock->ops = &v4v_stream_ops;
+                break;
+        default:
+		printk("%s: default \n", __func__);
+                rc = -ESOCKTNOSUPPORT;
+                goto out;
+        }
+
+        sock->state = SS_UNCONNECTED;
+
+        sk = sk_alloc(net, AF_XEN, GFP_KERNEL, &v4v_proto);
+        if (!sk) {
+                rc = -ENOMEM;
+                printk (KERN_ERR "%s: cannot allocate socket: ret = %d\n", __func__, rc);
+                goto out;
+        }
+
+        sock_init_data(sock, sk);
+        sk->sk_family = PF_XEN;
+        sk->sk_protocol = protocol;
+        x = xen_sk(sk);
+        initialize_v4v_sock(x);
+
+out:
+        dprintk_out();
+        return rc;
+}
+
+static struct net_proto_family v4v_family_ops = {
+  .family         = AF_XEN,
+  .create         = v4v_sock_create,
+  .owner          = THIS_MODULE,
+};
 
 static int __init v4v_init(void)
 {
@@ -3288,6 +4123,7 @@ static int __init v4v_init(void)
                 goto out;
         }
 
+#if 0
         error = platform_driver_register(&v4v_driver);
         if (error) {
                 ret = error;
@@ -3309,6 +4145,16 @@ static int __init v4v_init(void)
                 goto out;
         }
 
+#endif
+	v4v_probe(NULL);
+	ret = proto_register(&v4v_proto, 0);
+	if (ret != 0) {
+		printk(KERN_CRIT "%s: Cannot create v4v_sock SLAB cache!\n", __func__);
+		goto out;
+	}
+
+	sock_register(&v4v_family_ops);
+
 out:
         dprintk_out();
         return ret;
@@ -3317,14 +4163,20 @@ out:
 static void __exit v4v_cleanup(void)
 {
 	dprintk_in();
-        platform_device_unregister(v4v_platform_device);
-        platform_driver_unregister(&v4v_driver);
+
+
+	sock_unregister(AF_XEN);
+        //platform_driver_unregister(&v4v_driver);
+        //platform_device_unregister(v4v_platform_device);
+	proto_unregister(&v4v_proto);
+
+	v4v_remove(NULL);
+
 	dprintk_out();
 }
-
-
 
 
 module_init(v4v_init);
 module_exit(v4v_cleanup);
 MODULE_LICENSE("GPL");
+

@@ -1,7 +1,8 @@
 # Comment/uncomment the following line to disable/enable debugging
-EXTRA_DEBUG = n
-DEBUG = n
+EXTRA_DEBUG = y
+DEBUG = y
 
+DEBUG_INFO=y
 ETAGS=etags 
 
 # Add your debugging flag (or not) to CFLAGS

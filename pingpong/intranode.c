@@ -11,6 +11,7 @@
 #include <getopt.h>
 #include <arpa/inet.h>
 #include "utils.h"
+#include "../driver/v4v.h"
 
 #define TIMERS_ENABLED
 #include "timers.h"
@@ -65,7 +66,7 @@ int initial_data_size = -1;
 int last_data_size = -1;
 int print_enabled = 0;
 int p = 0;
-int family = AF_INET;
+int family = AF_XEN;
 int type = -1;
 int protocol = 0;
 int partner = -1;

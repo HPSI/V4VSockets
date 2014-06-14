@@ -35,4 +35,29 @@
 #define V4V_ROUNDUP(a) (((a) +0xf ) & ~0xf)	//additional
 #define __HYPERVISOR_v4v_op 39
 
+struct sockaddr_xe {
+  sa_family_t sxe_family;
+  u_int16_t   remote_domid;
+  //int         shared_page_gref;
+};
+
+struct sockaddr_v4v {
+        sa_family_t sa_family;
+        unsigned short v4v_reserved1;
+        unsigned int port;
+        unsigned int domain;
+        unsigned char pad[sizeof(struct sockaddr) -
+                               sizeof(sa_family_t) -
+                               sizeof(unsigned short) -
+                               sizeof(unsigned int) - sizeof(unsigned int)];
+};
+
+
+#define AF_XEN  41
+#define PF_XEN  AF_XEN
+
+#define xen_sk(__sk) ((struct v4v_sock *)__sk)
+#define sk_v4v_sock(__vsk) (&(__vsk)->sk)
+
+
 #endif
