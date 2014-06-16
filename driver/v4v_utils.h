@@ -45,7 +45,7 @@
 # define V4V_INLINE
 #endif
 
-
+#undef V4V_DEBUG
 /*
  * Utility functions
  */
@@ -528,5 +528,6 @@ out:
         return ret;
 }
 
+#define V4V_DEBUG
 
 #endif /* !__V4V_UTILS_H__ */
