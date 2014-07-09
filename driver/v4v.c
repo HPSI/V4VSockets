@@ -2198,11 +2198,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                                 kfree(pending);
                                 v4v_atomic_dec(&p->pending_recv_count);
                                 if (p->full) {
-<<<<<<< Updated upstream
                                         //printk(KERN_INFO "freeing up some stuff, pending recv count %d, p->full:%d\n", p->pending_recv_count, p->full);
-=======
-                                        dprintk(KERN_INFO "freeing up some stuff, pending recv count %d, p->full:%d\n", p->full);
->>>>>>> Stashed changes
                                         schedule_irq = 1;
 				}
                         } else
