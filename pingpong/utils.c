@@ -21,9 +21,9 @@ v4v_addr_t peer;
 unsigned long inet_addr(char *cp) {
 	int ret = -1;
 	if(!strcmp(cp,"192.168.129.2"))
-		ret = 1;
+		ret = 3;
 	if(!strcmp(cp,"192.168.129.3"))
-		ret = 2;
+		ret = 4;
 	return ret;
 }
 
@@ -88,7 +88,7 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 		fprintf(stderr,"%s: port:%#x\n", __func__, peer.port);
 		peer.domain = addr_in.sin_addr.s_addr;
 		fprintf(stderr,"%s: domain:%#x\n", __func__, peer.domain);
-		peer.domain=1;
+		//peer.domain=1;
 		ret = ioctl(sockfd, V4VIOCCONNECT, &peer);
 		fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
 	} while (ret == -EINPROGRESS);

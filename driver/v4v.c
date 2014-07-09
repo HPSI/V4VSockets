@@ -176,7 +176,7 @@ struct pending_xmit {
         uint8_t data[0];
 };
 
-#define MAX_PENDING_RECVS        16
+#define MAX_PENDING_RECVS        512
 
 /* Hypercalls */
 
@@ -823,7 +823,7 @@ copy_into_pending_recv(struct ring *r, int len, struct v4v_private *p)
 	dprintk_in();
         /* Too much queued? Let the ring take the strain */
         if ((count = atomic_read(&p->pending_recv_count)) > MAX_PENDING_RECVS) {
-                printk(KERN_INFO "pending recv count %d, p->full:%d\n", count, p->full);
+                //printk(KERN_INFO "pending recv count %d, p->full:%d\n", count, p->full);
                 spin_lock(&p->pending_recv_lock);
                 p->full = 1;
                 spin_unlock(&p->pending_recv_lock);
@@ -2008,7 +2008,7 @@ v4v_recv_stream(struct v4v_private *p, void *_buf, int len, int recv_flags,
                                 kfree(pending);
                                 atomic_dec(&p->pending_recv_count);
                                 if (p->full) {
-                                        printk(KERN_INFO "freeing up some stuff, pending recv count %d, p->full:%d\n", p->full);
+                                        //printk(KERN_INFO "freeing up some stuff, pending recv count %d, p->full:%d\n", p->full);
                                         schedule_irq = 1;
 				}
                         } else
