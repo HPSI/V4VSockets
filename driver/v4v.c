@@ -235,33 +235,33 @@ struct pending_xmit {
 
 static void v4v_atomic_inc(atomic_t *refcnt) 
 {
-	printk(KERN_INFO "inc: %d\n", atomic_read(refcnt));
+	dprintk(KERN_INFO "inc: %d\n", atomic_read(refcnt));
 	atomic_inc(refcnt);
-	printk(KERN_INFO "inc: %d\n", atomic_read(refcnt));
+	dprintk(KERN_INFO "inc: %d\n", atomic_read(refcnt));
 }
 
 static void v4v_atomic_dec(atomic_t *refcnt) 
 {
-	printk(KERN_INFO "dec: %d\n", atomic_read(refcnt));
+	dprintk(KERN_INFO "dec: %d\n", atomic_read(refcnt));
 	atomic_dec(refcnt);
-	printk(KERN_INFO "dec: %d\n", atomic_read(refcnt));
+	dprintk(KERN_INFO "dec: %d\n", atomic_read(refcnt));
 }
 
 static inline int v4v_atomic_dec_and_test(atomic_t *refcnt) 
 {
 	int ret = 0;
-	printk(KERN_INFO "decand_test: %d\n", atomic_read(refcnt));
+	dprintk(KERN_INFO "decand_test: %d\n", atomic_read(refcnt));
 	ret = atomic_dec_and_test(refcnt);
-	printk(KERN_INFO "decand_test: %d, ret:%d\n", atomic_read(refcnt), ret);
+	dprintk(KERN_INFO "decand_test: %d, ret:%d\n", atomic_read(refcnt), ret);
 	return ret;
 }
 
 static inline int v4v_atomic_add_unless(atomic_t *refcnt, int v, int u) 
 {
 	int ret = 0;
-	printk(KERN_INFO "add_unless: %d, v:%d, u:%d\n", atomic_read(refcnt), v, u);
+	dprintk(KERN_INFO "add_unless: %d, v:%d, u:%d\n", atomic_read(refcnt), v, u);
 	ret = atomic_add_unless(refcnt, v, u);
-	printk(KERN_INFO "add_unless: %d, v:%d, u:%d\n", atomic_read(refcnt), v, u);
+	dprintk(KERN_INFO "add_unless: %d, v:%d, u:%d\n", atomic_read(refcnt), v, u);
 	return ret;
 }
 
@@ -296,16 +296,25 @@ static void dump_sockaddr_in(struct sockaddr *addr)
 
 static void sockaddr_to_v4v(struct sockaddr *addr, struct sockaddr_v4v *vm_addr)
 {
-	struct sockaddr_in *in_addr = addr;
 
+	struct sockaddr_in *in_addr = addr;
 	dump_sockaddr_in(addr);
 	vm_addr->sa_family = in_addr->sin_family;
-	if (in_addr->sin_addr.s_addr == 0x381a8c0) {
-		vm_addr->domain = 3;
+	if (vm_addr->sa_family != AF_XEN) {
+		struct sockaddr_in *inn_addr = addr;
+		if (inn_addr->sin_addr.s_addr == 0x381a8c0) {
+			vm_addr->domain = 2;
+		}
+		else 
+			vm_addr->domain = 1;
+		vm_addr->port = inn_addr->sin_port;
 	}
-	else 
-		vm_addr->domain = 1;
-	vm_addr->port = in_addr->sin_port;
+	else
+	{
+		struct sockaddr_v4v *inn_addr = addr;
+		vm_addr->domain = inn_addr->domain;
+		vm_addr->port = inn_addr->port;
+	}
 	dump_sockaddr(vm_addr);
 }
 
@@ -313,12 +322,13 @@ static void v4v_to_sockaddr(struct sockaddr_in *addr, struct sockaddr_v4v *vm_ad
 {
 	dump_sockaddr(vm_addr);
 	addr->sin_family = vm_addr->sa_family;
-	if (vm_addr->domain == 3) {
+	if (vm_addr->domain == 2) {
 		addr->sin_addr.s_addr = 0x381a8c0;
 	}
 	else 
 		addr->sin_addr.s_addr = 0x281a8c0;
 	addr->sin_port = vm_addr->port;
+	addr->sin_family = AF_INET;
 	dump_sockaddr_in(addr);
 }
 
@@ -690,6 +700,7 @@ static int new_ring(struct v4v_private *sponsor, struct v4v_ring_id *pid)
                 return -EINVAL;
 	
         r = kmalloc(sizeof(struct ring), GFP_KERNEL);
+	dprintk("will ring alloc: %p\n", r);
         memset(r, 0, sizeof(struct ring));
 
         dprintk("desired_ring_size: %#x\n", sponsor->desired_ring_size);
@@ -720,6 +731,7 @@ static int new_ring(struct v4v_private *sponsor, struct v4v_ring_id *pid)
         r->sponsor = sponsor;
         sponsor->r = r;
         sponsor->state = V4V_STATE_BOUND;
+	dprintk("sponsor setup:%p, %p\n", r->sponsor, r);
 
         dprintk("port:%d domain:%d partner:%d\n", id.addr.port, id.addr.domain, id.partner);
         ret = register_ring(r);
@@ -2953,11 +2965,13 @@ static int v4v_release(struct inode *inode, struct file *f)
                                      struct pending_recv, node);
 
                 list_del(&pending->node);
+		dprintk("will free: %p\n", pending);
                 kfree(pending);
                 v4v_atomic_dec(&p->pending_recv_count);
         }
 
  release:
+	dprintk("will free: %p\n", p);
         kfree(p);
 
         dprintk_out();
@@ -3571,6 +3585,7 @@ static int v4v_sock_shutdown(struct socket *sock, int mode)
         }
 
 out:
+	dprintk("returns:%d\n", ret);
 	dprintk_out();
 	return ret;
 }
@@ -3649,6 +3664,7 @@ static int v4v_sock_stream_connect(struct socket *sock, struct sockaddr *addr,
 	v4v_address.domain = vm_addr.domain;
 	v4v_address.port = vm_addr.port;
 
+	dump_sockaddr(&vm_addr);
 	priv_data = get_priv_data(xsk);
 #if 1
         /* Bind if not done */
@@ -4063,12 +4079,13 @@ static int v4v_sock_release (struct socket *sock)
 
         dprintk_in();
 
-	printk(KERN_INFO "%s: releasing sock:%p\n", __func__, sock);
+	dprintk("%s: releasing sock:%p\n", __func__, sock);
 	sk = sock->sk;
 	if (!sk) {
 		printk(KERN_INFO "%s: socket is null ;-)\n", __func__);
 		goto out;
 	}
+	dprintk("sk:%p\n", __func__, sk);
 	xsk = xen_sk(sk);
 	priv_data = get_priv_data(xsk);
 	p = priv_data;
@@ -4092,8 +4109,9 @@ static int v4v_sock_release (struct socket *sock)
                 goto release;
         }
 
+	dprintk_err("sponsor destroy:%p, %p, %p\n", p, p->r, p->r->sponsor);
         if (p != p->r->sponsor) {
-		dprintk_err("sponsor not equal:%p\n", p);
+		dprintk_err("sponsor not equal:%p, %p, %p\n", p, p->r, p->r->sponsor);
                 put_ring(p->r);
                 list_del(&p->node);
                 write_unlock_irqrestore(&list_lock, flags);
@@ -4111,6 +4129,7 @@ static int v4v_sock_release (struct socket *sock)
 		dprintk_err("empty pending receives:%p\n", pending);
 
                 list_del(&pending->node);
+		dprintk("will free: %p\n", pending);
                 kfree(pending);
                 v4v_atomic_dec(&p->pending_recv_count);
         }
@@ -4119,7 +4138,10 @@ release:
         dprintk_err("pending_recv:%d\n", list_empty(&p->pending_recv_list));
         dprintk_err("pending_xmit:%d\n", list_empty(&pending_xmit_list));
         dprintk_err("ring_list:%d\n", list_empty(&ring_list));
+	dprintk("will free: %p\n", p);
         kfree(p);
+	dprintk("will free: %p\n", sk);
+	sk_free(sk);
 
 out:
         dprintk_out();
@@ -4170,6 +4192,7 @@ static void initialize_v4v_sock(struct v4v_sock *x)
         p = kmalloc(sizeof(struct v4v_private), GFP_KERNEL);
         if (!p)
                 return -ENOMEM;
+	dprintk("will alloc: %p\n", p);
 	total = 0;
 
         memset(p, 0, sizeof(struct v4v_private));
@@ -4206,7 +4229,7 @@ static int v4v_sock_create(struct net *net, struct socket *sock,
 		goto out;
 	}
 
-	printk("%s: protocol:%#lx \n", __func__, protocol);
+	dprintk("protocol:%#lx \n", __func__, protocol);
 #if 0
         if (protocol && protocol != PF_XEN) {
 		printk("%s: !protocol \n", __func__);
@@ -4235,7 +4258,8 @@ static int v4v_sock_create(struct net *net, struct socket *sock,
                 rc = -ENOMEM;
                 printk (KERN_ERR "%s: cannot allocate socket: ret = %d\n", __func__, rc);
                 goto out;
-        }
+        } 
+	dprintk("sk alloc:%p\n", sk);
 
         sock_init_data(sock, sk);
         sk->sk_family = PF_XEN;
@@ -4244,6 +4268,7 @@ static int v4v_sock_create(struct net *net, struct socket *sock,
         initialize_v4v_sock(x);
 
 out:
+	dprintk("returns: %d\n", rc);
         dprintk_out();
         return rc;
 }
