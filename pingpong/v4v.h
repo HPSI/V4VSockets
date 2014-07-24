@@ -31,6 +31,7 @@
 #define V4VIOCACCEPT _IOW(V4V_TYPE, 8, v4v_addr_t)
 #define V4VIOCSEND _IOW(V4V_TYPE, 9, struct v4v_dev)
 #define V4VIOCRECV _IOW(V4V_TYPE, 10, struct v4v_dev)
+#define V4VIOCSETSOCKOPT _IOW(V4V_TYPE, 14, struct sockopt_val )
 
 #define AF_V4V 12345
 
@@ -194,6 +195,18 @@ typedef struct v4vtables_list
     struct v4vtables_rule rules[0];
 #endif
 } v4vtables_list_t;
+
+struct ring_struct {
+        uint32_t ring_size;
+        uint32_t write_lump;
+};
+
+struct sockopt_val {                                                            
+        union sockopt_un {
+                struct ring_struct ring_stuff;
+                uint32_t single_integer;
+        } value;
+};
 
 /*
  * HYPERCALLS

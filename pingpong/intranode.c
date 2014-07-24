@@ -25,6 +25,20 @@
 #define AF_V4V 12345
 #define ALIGN 4096
 
+
+struct ring_struct {                                                                                                                          
+        uint32_t ring_size;
+        uint32_t write_lump;
+};
+
+struct sockopt_val {
+        union sockopt_un {
+                struct ring_struct ring_stuff;
+                uint32_t single_integer;
+        } value;
+};
+
+
 void print(unsigned char* buf, uint32_t size);
 int validate_data(unsigned char* reader, unsigned char* writer, uint32_t size);
 void initialize_data(unsigned char *buf, uint32_t size);
@@ -76,7 +90,8 @@ unsigned long my_address = -1;
 unsigned long partner_address = -1;
 unsigned char *reader, *writer;
 int iteration_num = -1;
-
+int ring_size = 0;
+int write_lump = 0;
 #if 1
 void* aligned_malloc(size_t size) {
 	void *ptr;
@@ -196,7 +211,8 @@ void client_dgram() {
                 time_write = TIMER_AVG(&timer_write);
                 time_total = time_read + time_write;
 		/*total time*/
-		printf("%ld %lf %lf %lf %lf %lf %lf\n", data_size, time_read, time_write, 1.0 * data_size / (time_read), 1.0 * data_size / time_write, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num /(TIMER_TOTAL(&timer_total)/2));
+		//printf("%ld %lf %lf %lf %lf %lf %lf\n", data_size, time_read, time_write, 1.0 * data_size / (time_read), 1.0 * data_size / time_write, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num /(TIMER_TOTAL(&timer_total)/2));
+		printf("%ld %ld %ld %lf %lf\n", data_size, ring_size, write_lump, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num /(TIMER_TOTAL(&timer_total)/2));
 		fflush(stdout);
                 //printf("%ld %lf %lf \n", data_size, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num / (TIMER_TOTAL(&timer_total) / 2));
         }
@@ -241,6 +257,9 @@ void client() {
 		perror("connect");
 		exit(-1);
 	}
+	struct sockopt_val blah;
+	blah.value.ring_stuff.write_lump = write_lump;
+	setsockopt(fd, 0, NULL, &blah, sizeof(blah));
 	serLen = sizeof(server);
 	for(data_size = initial_data_size; data_size <= last_data_size; data_size<<=1) {
 	TIMER_RESET(&timer_total);
@@ -318,8 +337,9 @@ void client() {
 		//time_read = TIMER_TOTAL(&timer_read) / iteration_num;
 		//time_write = TIMER_TOTAL(&timer_write)/ iteration_num;
 		time_total = time_read + time_write;
-		printf("%ld %lf %lf %lf %lf %lf %lf\n", data_size, time_read, time_write, 1.0 * data_size / (time_read), 1.0 * data_size / time_write, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num /(TIMER_TOTAL(&timer_total)/2));
-		printf("%ld %ld %ld %ld %ld %ld \n", TIMER_TOTAL(&timer_read), TIMER_TOTAL(&timer_write), TIMER_COUNT(&timer_read), TIMER_COUNT(&timer_write), TIMER_TOTAL(&timer_total), TIMER_COUNT(&timer_total));
+		//printf("%ld %lf %lf %lf %lf %lf %lf\n", data_size, time_read, time_write, 1.0 * data_size / (time_read), 1.0 * data_size / time_write, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num /(TIMER_TOTAL(&timer_total)/2));
+		printf("%ld %ld %ld %lf %lf\n", data_size, ring_size, write_lump, 1.0 * TIMER_TOTAL(&timer_total)/iteration_num/2, 1.0 * data_size * iteration_num /(TIMER_TOTAL(&timer_total)/2));
+		//printf("%ld %ld %ld %ld %ld %ld \n", TIMER_TOTAL(&timer_read), TIMER_TOTAL(&timer_write), TIMER_COUNT(&timer_read), TIMER_COUNT(&timer_write), TIMER_TOTAL(&timer_total), TIMER_COUNT(&timer_total));
 		fflush(stdout);
 		//printf("\nread %ld %ld\n", TIMER_COUNT(&timer_read), TIMER_AVG(&timer_read));
 		//printf("\nwrite %ld %ld\n", TIMER_COUNT(&timer_write), TIMER_AVG(&timer_write));
@@ -360,6 +380,9 @@ void server_stream() {
 		exit(-1);
 	}
 	/*accept*/
+	struct sockopt_val blah;
+	blah.value.ring_stuff.write_lump = write_lump;
+	setsockopt(fd, 0, NULL, &blah, sizeof(blah));
 	client.sin_family = family;
 	cliLen = sizeof(client);
 	ret = accept(fd, (struct sockaddr *)&client, &cliLen);
@@ -480,6 +503,7 @@ void server_dgram() {
 		}
 		aligned_free(reader);
 	}
+	sleep(2);
 	close(fd);
 	return;
 }
@@ -528,7 +552,6 @@ void initialize_data(unsigned char *buf, uint32_t size) {
 
 int main(int argc, char** argv) {
 	int c;
-	uint32_t ring_size;
 	int temp;
 	timers_t hpt1;
 	int tem1p;
@@ -547,15 +570,15 @@ int main(int argc, char** argv) {
         printf("%ld\t%ld\n", TIMER_COUNT(&hpt1), TIMER_TOTAL(&hpt1));
         printf("%ld\t%ld\n", TIMER_COUNT(&hpt2), TIMER_TOTAL(&hpt2));
 	*/
-	while ((c = getopt(argc, argv, "o:m:scdtxr:b:e:n:vp:h")) != -1)
+	while ((c = getopt(argc, argv, "o:m:scdtxr:b:e:n:vp:hw:")) != -1)
 		switch(c) {
 		case 'o':/*partners id*/
 			partner_address = inet_addr(optarg);
-			printf("%u:\n", partner_address);
+			//printf("%u:\n", partner_address);
 			break;
 		case 'm':/*my id*/
 			my_address = inet_addr(optarg);
-			printf("%u:\n", my_address);
+			//printf("%u:\n", my_address);
 			break;
 		case 's':
 			mode |= FLAG_SERVER;
@@ -576,7 +599,12 @@ int main(int argc, char** argv) {
 			break;
 		case 'r':
 			ring_size = atoi(optarg);
+			//memcpy(&protocol, cast_ring, sizeof(struct ring_struct));
 			protocol = ring_size;
+			break;
+		case 'w':
+			write_lump = atoi(optarg);
+			//memcpy(&protocol, cast_ring, sizeof(struct ring_struct));
 			break;
 		case 'b':
 			initial_data_size = atoi(optarg);
@@ -616,6 +644,5 @@ int main(int argc, char** argv) {
 		else
 			client();
 	}
-	printf("\n\n");
 	return 0;
 }

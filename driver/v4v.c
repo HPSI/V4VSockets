@@ -99,6 +99,18 @@ static struct list_head ring_list;
 
 struct v4v_private;
 
+struct ring_struct {
+	uint32_t ring_size;
+	uint32_t write_lump;
+};
+
+struct sockopt_val {
+        union sockopt_un {
+                struct ring_struct ring_stuff;
+                uint32_t single_integer;
+        } value;
+};
+
 /*
  * Ring pointer itself is protected by the refcnt the lists its in by list_lock.
  *
@@ -1609,8 +1621,8 @@ v4v_sendto_from_sponsor(struct v4v_private *p,
         if (len > (p->r->ring->len - sizeof(struct v4v_ring_message_header))) {
 		dprintk_err("message size: %#lx vs. %#lx\n", len, p->r->ring->len - sizeof(struct v4v_ring_message_header));
                 len = p->r->ring->len - sizeof(struct v4v_ring_message_header);
-                //ret = -EMSGSIZE;
-		//goto out;
+                ret = -EMSGSIZE;
+		goto out;
 	}
 	dprintk("%s len = %#lx, ring_len = %#x, mh = %#lx\n", __func__, len, p->r->ring->len, sizeof(struct v4v_ring_message_header));
         if (ret)
@@ -1789,6 +1801,36 @@ static int v4v_get_peer_name(struct v4v_private *p, v4v_addr_t * id)
         return rc;
 }
 
+static int v4v_set_write_lump(struct v4v_private *p, uint32_t write_lump)
+{
+	
+	dprintk_in();
+
+        if (write_lump < 0)
+                return -EINVAL;
+
+        read_lock(&list_lock);
+        //if (p->state != V4V_STATE_IDLE) {
+        //        read_unlock(&list_lock);
+        //        return -EINVAL;
+        //}
+
+        p->write_lump = write_lump;
+        read_unlock(&list_lock);
+
+	dprintk_out();
+
+        return 0;
+}
+static int v4v_setsockopt(struct v4v_private *p, struct sockopt_val *val)
+{
+	int ret = 0;
+	if ((ret =v4v_set_write_lump(p, val->value.ring_stuff.write_lump)))
+		return ret;
+	printk(KERN_INFO "write_lump:%#lx\n", p->write_lump);
+	
+        return ret;
+}
 static int v4v_set_ring_size(struct v4v_private *p, uint32_t ring_size)
 {
 	
@@ -2055,8 +2097,30 @@ v4v_send_stream(struct v4v_private *p, const void *_buf, int len, int nonblock)
 	dprintk_in();
 
         //write_lump = (len >= p->r->ring->len + sizeof(struct v4v_ring_message_header) + sizeof(struct v4v_stream_header) ? p->r->ring->len >> 1 : (DEFAULT_RING_SIZE) >> 2); //DEFAULT_RING_SIZE >> 2;
-        write_lump = (p->r->ring->len ? p->r->ring->len >> 4 : (DEFAULT_RING_SIZE) >> 2); //DEFAULT_RING_SIZE >> 2;
-        //printk(KERN_INFO "write_lump: %#lx\n", write_lump);
+        //write_lump = (p->r->ring->len ? p->r->ring->len >> 4 : (DEFAULT_RING_SIZE) >> 2); //DEFAULT_RING_SIZE >> 2;
+        //write_lump = (len > p->r->ring->len ? (p->write_lump ? p->write_lump : p->r->ring->len >> 4) : len );
+#if 0
+        if (len > p->r->ring->len >> 1) {
+		write_lump = p->write_lump;
+	}
+	if (write_lump > len) {
+		write_lump = len >>1;
+        	printk(KERN_INFO "change write_lump: %#lx\n", write_lump);
+        //
+	}
+	if (len > p->write_lump) {
+        	printk(KERN_INFO "len:%#lx, p->write_lump: %#lx\n", len, write_lump);
+		write_lump = p->write_lump;
+	}
+	if (p->write_lump >= p->r->ring->len) {
+        	p->write_lump = p->write_lump >> 1;
+        	printk(KERN_INFO "change write_lump: %#lx\n", write_lump);
+	}
+	
+        write_lump = 65536;
+#endif
+        write_lump = p->write_lump ? p->write_lump : p->r->ring->len >> 2;
+		
 
         switch (p->state) {
         case V4V_STATE_DISCONNECTED:
@@ -2781,7 +2845,7 @@ v4v_read(struct file *f, char __user * buf, size_t count, loff_t * ppos)
         return v4v_recvfrom(p, (void *)buf, count, 0, NULL, nonblock);
 }
 
-static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
+static long v4v_ioctl(struct file *f, unsigned int cmd, void *arg)
 {
         int rc = -ENOTTY;
 
@@ -2796,13 +2860,23 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 
         switch (cmd) {
         case V4VIOCSETRINGSIZE:
-                if (!access_ok(VERIFY_READ, arg, sizeof(uint32_t))) {
+                if (!access_ok(VERIFY_READ, arg, sizeof(uint32_t ))){
 			dprintk_err("Access not ok %#lx\n", arg);
 			rc = -EFAULT;
 			goto out;
 		}
-                rc = v4v_set_ring_size(p, *(uint32_t *) arg);
-		dprintk("%s: args=%#x\n", v4v_ioctl2text(cmd), *(uint32_t *) arg);
+                rc = v4v_set_ring_size(p, (uint32_t) arg);
+#if 0
+                if (((struct ring_struct *) arg)->write_lump) {
+                	rc = v4v_set_write_lump(p, ((struct ring_struct *) arg)->write_lump);
+		}
+		//else
+		//{
+                //	rc = v4v_set_write_lump(p, ((struct ring_struct *) arg)->ring_size >> 1);
+		//}
+		printk(KERN_INFO "write_lump:%#lx, %#lx\n", ((struct ring_struct *) arg)->write_lump, ((struct ring_struct *) arg)->ring_size); 
+#endif
+		//dprintk("%s: args=%#x\n", v4v_ioctl2text(cmd), *(uint32_t *) arg);
                 break;
         case V4VIOCBIND: {
 		struct v4v_ring_id * ring_id = (struct v4v_ring_id *)arg;
@@ -3000,6 +3074,20 @@ static long v4v_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
                         struct v4vtables_list *list =
                             (struct v4vtables_list *)arg;
                         rc = v4v_viptables_list(p, list);
+                }
+                break;
+        case V4VIOCSETSOCKOPT:
+                if (!access_ok
+                    (VERIFY_READ, arg, sizeof(struct sockopt_val))) {
+			dprintk_err("Access not ok %#lx", arg);
+                        rc = -EFAULT;
+                        goto out;
+                }
+                {
+                        struct sockopt_val *val= (struct sockopt_val *)arg;
+                        rc = v4v_setsockopt(p, val);
+			printk(KERN_INFO "blah: rc=%d\n", rc);
+			
                 }
                 break;
         default:

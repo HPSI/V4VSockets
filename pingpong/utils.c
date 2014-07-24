@@ -17,13 +17,40 @@ uint32_t ring_size;
 int dgram = 0;
 v4v_ring_id_t my_ring;
 v4v_addr_t peer;
-
 unsigned long inet_addr(char *cp) {
 	int ret = -1;
 	if(!strcmp(cp,"192.168.129.2"))
-		ret = 3;
+		ret = 1;
 	if(!strcmp(cp,"192.168.129.3"))
+		ret = 2;
+	if(!strcmp(cp,"192.168.129.4"))
+		ret = 3;
+	if(!strcmp(cp,"192.168.129.5"))
 		ret = 4;
+	if(!strcmp(cp,"192.168.129.6"))
+		ret = 5;
+	if(!strcmp(cp,"192.168.129.7"))
+		ret = 6;
+	if(!strcmp(cp,"192.168.129.8"))
+		ret = 7;
+	if(!strcmp(cp,"192.168.129.9"))
+		ret = 8;
+	if(!strcmp(cp,"192.168.129.10"))
+		ret = 9;
+	if(!strcmp(cp,"192.168.129.11"))
+		ret = 10;
+	if(!strcmp(cp,"192.168.129.12"))
+		ret = 11;
+	if(!strcmp(cp,"192.168.129.13"))
+		ret = 12;
+	if(!strcmp(cp,"192.168.129.14"))
+		ret = 13;
+	if(!strcmp(cp,"192.168.129.15"))
+		ret = 14;
+	if(!strcmp(cp,"192.168.129.16"))
+		ret = 15;
+	if(!strcmp(cp,"192.168.129.17"))
+		ret = 16;
 	return ret;
 }
 
@@ -32,10 +59,13 @@ int socket(int domain, int type, int protocol) {
 	int fd = -1;
 	int ret = 0;
 	uint32_t real_ring_size;
+	struct ring_struct ring_stuff, *cast_ring;
+	cast_ring = &protocol;
+	
 
-		ring_size = protocol ? protocol: V4V_ROUNDUP(128 * 4096);
+		ring_size = protocol? protocol: V4V_ROUNDUP(2 * 1024 * 1024);
 		if (ring_size < 0x1000) {
-			ring_size = V4V_ROUNDUP(128 * 4096);
+			ring_size = V4V_ROUNDUP(2 * 1024* 1024);
 		}
 		if (type == SOCK_STREAM) {
 			//real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 92);
@@ -48,11 +78,21 @@ int socket(int domain, int type, int protocol) {
 			//real_ring_size = (uint32_t) V4V_ROUNDUP(protocol + 84);
 			real_ring_size = ring_size;
 		}
-		fprintf(stderr,"real_ring_size = %#lx\n", real_ring_size);
+		//ring_stuff.ring_size = real_ring_size;
+		//ring_stuff.write_lump = cast_ring->write_lump;
+		//fprintf(stderr,"real_ring_size = %#lx, write_lump:%#lx\n", real_ring_size, cast_ring->write_lump);
 		if (fd > 0)
-			ret = ioctl(fd, V4VIOCSETRINGSIZE, &real_ring_size);
+			ret = ioctl(fd, V4VIOCSETRINGSIZE, real_ring_size);
 		if (ret < 0)
 			fd = ret;
+		struct sockopt_val blah;
+		blah.value.ring_stuff.write_lump = ring_size >> 1;
+		//printf("write_lump: %d\n", blah.value.ring_stuff.write_lump);
+		if (ret > 0)
+			ret = ioctl(fd, V4VIOCSETSOCKOPT, &blah);
+		if (ret < 0)
+			fd = ret;
+	ring_size = 1024*1024*1024*15;
 	return fd;
 }
 
@@ -63,14 +103,14 @@ int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 
 	memcpy(&addr_in, addr, addrlen);
 	my_ring.addr.domain = V4V_DOMID_NONE;
-	fprintf(stderr,"%s: domain: %#lx\n", __func__, my_ring.addr.domain);
+	//fprintf(stderr,"%s: domain: %#lx\n", __func__, my_ring.addr.domain);
 	my_ring.partner = addr_in.sin_addr.s_addr;
-	fprintf(stderr,"%s: partner: %#lx\n", __func__, my_ring.partner);
+	//fprintf(stderr,"%s: partner: %#lx\n", __func__, my_ring.partner);
 	my_ring.addr.port = addr_in.sin_port;
-	fprintf(stderr,"%s: port: %#lx\n", __func__, my_ring.addr.port);
+	//fprintf(stderr,"%s: port: %#lx\n", __func__, my_ring.addr.port);
 	//if (!addr_in.sin_port) my_ring.addr.port=12856;
 	ret = ioctl(sockfd, V4VIOCBIND, &my_ring);
-	fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
+	//fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
 	
 	return ret;
 }
@@ -85,12 +125,12 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 		dump_sockaddr(stderr, &addr_in);
 		peer.port = addr_in.sin_port;
 		if (!addr_in.sin_port) my_ring.addr.port=0x4132;
-		fprintf(stderr,"%s: port:%#x\n", __func__, peer.port);
+		//fprintf(stderr,"%s: port:%#x\n", __func__, peer.port);
 		peer.domain = addr_in.sin_addr.s_addr;
-		fprintf(stderr,"%s: domain:%#x\n", __func__, peer.domain);
+		//fprintf(stderr,"%s: domain:%#x\n", __func__, peer.domain);
 		//peer.domain=1;
 		ret = ioctl(sockfd, V4VIOCCONNECT, &peer);
-		fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
+		//fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
 	} while (ret == -EINPROGRESS);
 		
 	
@@ -103,7 +143,7 @@ int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
 
 	do {
 	ret = ioctl(sockfd, V4VIOCACCEPT, &peer);
-	fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
+	//fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
 	 } while (ret == -1);
 	
 
@@ -119,7 +159,7 @@ int listen(int sockfd, int backlog)	{
 	ret = ioctl(sockfd, V4VIOCLISTEN, arg);
 	} while (ret == -1);
 
-	fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
+	//fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
 	return ret;
 }
 
@@ -245,7 +285,15 @@ int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 int setsockopt(int sockfd, int level, int optname,
              const void *optval, socklen_t optlen)
 {
-return 0;
+	int ret = -1;
+        uint32_t arg;
+
+        do {
+        	ret = ioctl(sockfd, V4VIOCSETSOCKOPT, optval);
+        } while (ret == -1);
+	
+        //fprintf(stderr,"%s: ret: %#lx\n", __func__, ret);
+        return ret;
 }
 
 
@@ -265,6 +313,7 @@ int	dump_sockaddr(FILE *tfp, struct sockaddr_in *sinptr)
 	     (tfp == (FILE *)NULL) )
 		return(-1);			/* insurance */
 
+#if 0
 	fprintf(tfp,
 	"\n  struct sockaddr_in { ");
 	k = sinptr->sin_family;
@@ -295,6 +344,7 @@ int	dump_sockaddr(FILE *tfp, struct sockaddr_in *sinptr)
 	"\n  } ");
 
 	fflush(tfp);
+#endif
 	return(0);
 }  /* end of dump_sockaddr */
 
