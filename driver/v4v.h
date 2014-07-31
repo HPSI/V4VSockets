@@ -32,6 +32,8 @@
 #define V4V_PROTO_DGRAM		0x3c2c1db8	//additional
 #define V4V_PROTO_STREAM	0x70f6a8e5	//additional
 
+#define V4V_MYRIXEN_OFFSET 	0xe9046693	//147.102.4.233
+
 #define V4V_ROUNDUP(a) (((a) +0xf ) & ~0xf)	//additional
 #define __HYPERVISOR_v4v_op 39
 
@@ -53,7 +55,7 @@ struct sockaddr_v4v {
 };
 
 
-#define AF_XEN  41
+#define AF_XEN  40
 #define PF_XEN  AF_XEN
 
 #define xen_sk(__sk) ((struct v4v_sock *)__sk)

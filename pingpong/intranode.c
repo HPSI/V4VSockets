@@ -23,7 +23,7 @@
 #define FLAG_V4V 0x4
 #define SERVER_PORT 1500
 #define CLIENT_PORT 1600
-#define AF_V4V 12345
+#define F_V4V 12345
 #define ALIGN 4096
 
 void print(unsigned char* buf, uint32_t size);
@@ -119,6 +119,8 @@ void client_dgram() {
 	double time_read, time_write, time_total;
 
         /*socket*/
+
+	protocol = IPPROTO_UDP;
         fd = socket(family, type, protocol);
         if(fd<0) {
                 perror("socket");
@@ -128,6 +130,7 @@ void client_dgram() {
         client.sin_family = family;
         client.sin_addr.s_addr = my_address;
         client.sin_port = htons(CLIENT_PORT+p);
+	printf("will bind with client:%p, client.sin_addr.s_addr:%p\n", &client, &client.sin_addr.s_addr);
         ret = bind(fd, (struct sockaddr *)&client, sizeof(client));
         if (ret<0) {
                 perror("bind");
@@ -138,11 +141,13 @@ void client_dgram() {
         server.sin_family = family;
         server.sin_port = htons(SERVER_PORT+p);
         server.sin_addr.s_addr = partner_address;
+#if 1
         ret = connect(fd, (struct sockaddr *)&server, sizeof(server));
         if (ret<0) {
                 perror("connect");
                 exit(-1);
         }
+#endif
         serLen = sizeof(server);
 	        for(data_size = initial_data_size; data_size <= last_data_size; data_size<<=1 ) {
         TIMER_RESET(&timer_total);
@@ -181,6 +186,7 @@ void client_dgram() {
                             //    rtotal += ret;
                         //}
                 TIMER_STOP(&timer_total);
+                //reader[130000] = 'A';
                 ret = validate_data(reader, writer, data_size);
 		if (ret) {
 			break;
@@ -227,6 +233,7 @@ void client() {
 	client.sin_family = family;
 	client.sin_addr.s_addr = my_address;
 	client.sin_port = htons(CLIENT_PORT+p);
+	printf("will bind with client:%p, client.sin_addr.s_addr:%p\n", &client, &client.sin_addr.s_addr);
 	ret = bind(fd, (struct sockaddr *)&client, sizeof(client));
 	if (ret<0) {
 		perror("bind");
@@ -443,11 +450,13 @@ void server_dgram() {
 	client.sin_addr.s_addr = partner_address;
         client.sin_port = htons(CLIENT_PORT+p);
 	cliLen = sizeof(client);
+#if 1
         ret = connect(fd, (struct sockaddr *) &client, sizeof(client));
         if (ret<0) {
                 perror("connect");
                 exit(-1);
         }
+#endif
 	/***********************/
 	for(data_size=initial_data_size; data_size<=last_data_size; data_size<<=1) {
 	/*read*/
@@ -468,6 +477,7 @@ void server_dgram() {
 				printf("%s: I have read :\n", __func__);
 				print(reader, data_size);
 			}
+
 			/*write*/
 			//ret  = write(fd, reader, data_size);
 			//while(wtotal < data_size) {
@@ -510,9 +520,9 @@ int validate_data(unsigned char* reader, unsigned char* writer, uint32_t size) {
 				ret = -1;
 			}
 	if (ret) {
-		v4v_hexdump(reader, size);
-		printf("\n\n\n\n");
-		v4v_hexdump(writer, size);
+		//v4v_hexdump(reader, size);
+		//printf("\n\n\n\n");
+		//v4v_hexdump(writer, size);
 	}
 	return ret;
 }
