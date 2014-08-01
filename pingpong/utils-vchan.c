@@ -373,6 +373,10 @@ int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t
 	return 0;
 }
 
+int fcntl (int __fd, int __cmd, ...)
+{
+return 0;}
+
 #if 0
 struct in_addr *inet_aton(char * in)
 {

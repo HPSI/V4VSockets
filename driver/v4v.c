@@ -149,6 +149,7 @@ struct v4v_private {
         wait_queue_head_t writeq;
         v4v_addr_t peer;
         uint32_t conid;
+        uint32_t write_lump;
         spinlock_t pending_recv_lock;   /* Protects pending messages, and pending_error */
         struct list_head pending_recv_list;     /* For LISTENER contains only ... */
         atomic_t pending_recv_count;

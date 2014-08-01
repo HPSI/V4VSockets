@@ -30,5 +30,6 @@ struct v4v_viptables_rule_pos
 #define V4VIOCVIPTABLESADD	_IOW (V4V_TYPE, 11, struct v4v_viptables_rule_pos)
 #define V4VIOCVIPTABLESDEL	_IOW (V4V_TYPE, 12, struct v4v_viptables_rule_pos)
 #define V4VIOCVIPTABLESLIST	_IOW (V4V_TYPE, 13, struct v4vtables_list)
+#define V4VIOCSETSOCKOPT	_IOW (V4V_TYPE, 14, struct v4vtables_list)
 
 #endif
