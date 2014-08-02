@@ -26,7 +26,6 @@
 #define F_V4V 12345
 #define ALIGN 4096
 
-#include "test.h"
 void print(unsigned char* buf, uint32_t size);
 int validate_data(unsigned char* reader, unsigned char* writer, uint32_t size);
 void initialize_data(unsigned char *buf, uint32_t size);
@@ -142,7 +141,7 @@ void client_dgram() {
         server.sin_family = family;
         server.sin_port = htons(SERVER_PORT+p);
         server.sin_addr.s_addr = partner_address;
-#if 0
+#if 1
         ret = connect(fd, (struct sockaddr *)&server, sizeof(server));
         if (ret<0) {
                 perror("connect");
@@ -451,7 +450,7 @@ void server_dgram() {
 	client.sin_addr.s_addr = partner_address;
         client.sin_port = htons(CLIENT_PORT+p);
 	cliLen = sizeof(client);
-#if 0
+#if 1
         ret = connect(fd, (struct sockaddr *) &client, sizeof(client));
         if (ret<0) {
                 perror("connect");
@@ -467,7 +466,6 @@ void server_dgram() {
 			int rtotal = 0, wtotal = 0;
 			//ret = read(fd, reader, data_size);
 			//while(rtotal < data_size) {
-			//dump_sockaddr(stderr, &client);
 				ret = recvfrom(fd, reader, data_size, flags, (struct sockaddr *) &client, (socklen_t *) &cliLen);
 				if (ret<0) {
 					perror("raaaaead");
@@ -480,7 +478,6 @@ void server_dgram() {
 				print(reader, data_size);
 			}
 
-			//dump_sockaddr(stderr,&client);
 			/*write*/
 			//ret  = write(fd, reader, data_size);
 			//while(wtotal < data_size) {

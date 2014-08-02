@@ -2054,6 +2054,7 @@ retry2:
         }
         spin_unlock(&p->r->lock);
 
+	//dprintk("source port: %#x, domain: %#x\n", lsrc.port, lsrc.domain);
         if (!peek) {
 		dprintk_info("Is going to v4v_null_notify\n");
                 v4v_null_notify();
@@ -2069,8 +2070,8 @@ retry2:
                 goto retry;
         }
 
-	dump_v4vaddr(src);
-	dump_v4vaddr(&p->peer);
+	//dump_v4vaddr(src);
+	//dump_v4vaddr(&p->peer);
         if ((p->state == V4V_STATE_CONNECTED) && (src->port != p->peer.port || src->domain != p->peer.domain)) {
 //            memcmp(src, &p->peer, sizeof(v4v_addr_t))) {
 		dprintk("state:%d, memcmp;%d\n", (p->state == V4V_STATE_CONNECTED),  memcmp(src, &p->peer, sizeof(v4v_addr_t)));
@@ -2718,11 +2719,13 @@ v4v_sendto(struct v4v_private * p, const void *buf, size_t len, int flags,
 	addr->port = addr_local.port;
 	addr->domain= addr_local.domain;
 	}
+#if 0
 	if (!addr && p->state == V4V_STATE_BOUND) { 
 	addr = kmalloc(sizeof(v4v_addr_t), GFP_ATOMIC);
 	addr->port = p->peer.port;
 	addr->domain= p->peer.domain;
 	}
+#endif
 
         switch (p->ptype) {
         case V4V_PTYPE_DGRAM:
@@ -3954,7 +3957,7 @@ static int v4v_sock_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
 	dump_msghdr(msg);
 
 	//v4v_hexdump(msg->msg_name, msg->msg_namelen ? msg->msg_namelen : sizeof(struct sockaddr_v4v));
-	if ((msg->msg_name && msg->msg_namelen != 0) || p->state != V4V_STATE_CONNECTED) {
+	if ((msg->msg_name && msg->msg_namelen != 0) && p->state != V4V_STATE_CONNECTED) {
 		dprintk("msg_name:%p\n", msg->msg_name);
 		sockaddr_to_v4v(msg->msg_name, &my_addr);
 #if 0
