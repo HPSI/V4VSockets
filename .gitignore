@@ -14,5 +14,7 @@ driver/v4v_module.o
 pingpong/.vars
 pingpong/run_v4v.sh
 pingpong/intranode
+pingpong/intranode.o
+pingpong/libwrap.so
 pingpong/libutils.so
 pingpong/libutils-vchan.so
