@@ -2696,10 +2696,12 @@ v4v_sendto(struct v4v_private * p, const void *buf, size_t len, int flags,
                 ret = -EFAULT;
 		goto out;
 	}
-//	dump_sockaddr(addr);
-	//printk(KERN_INFO "addr:%p\n", addr);
-	
-#if 1
+
+	/* If our address if from userspace -- this is valid 
+	 * However, if this call originates from a sendto that 
+	 * was transformed to a sendmsg -- then things are really
+	 * complicated. We leave it as is for now.
+	 */
         if (!access_ok(VERIFY_READ, addr, sizeof(v4v_addr_t))) {
 		dump_v4vaddr(addr);
         	//if (copy_from_user(&addr_local, addr, sizeof(struct sockaddr_v4v))) {
@@ -2709,7 +2711,6 @@ v4v_sendto(struct v4v_private * p, const void *buf, size_t len, int flags,
 		//	goto out;
 		//}
 	}
-#endif
 
         if (flags & MSG_DONTWAIT)
                 nonblock++;
