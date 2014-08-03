@@ -304,6 +304,7 @@ static void sockaddr_to_v4v(struct sockaddr *addr, struct sockaddr_v4v *vm_addr)
 	struct sockaddr_in *in_addr = addr;
 
 	dump_sockaddr_in(addr);
+	/* Add a custom mapping until we get our own mapper daemon */
 	vm_addr->sa_family = in_addr->sin_family;
 	vm_addr->domain = ntohl(in_addr->sin_addr.s_addr) - ntohl(V4V_MYRIXEN_OFFSET);
 	vm_addr->port = in_addr->sin_port;
@@ -2016,7 +2017,7 @@ v4v_recvfrom_dgram(struct v4v_private *p, void *buf, size_t len,
 
 	dprintk("source port: %#x, domain: %#x\n",
 	         src->port, src->domain);
-retry2:
+retry:
         if (!nonblock) {
                 ret = wait_event_interruptible(p->readq,
                                                (p->r->ring->rx_ptr !=
@@ -2094,10 +2095,6 @@ unlock:
 	dprintk_out();
 
         return ret;
-retry:
-	//printk(KERN_INFO "RETRYYYYYYYYYYY\n");
-	dprintk("source port: %#x, domain: %#x\n", src->port, src->domain);
-	goto retry2;
 }
 
 static ssize_t
@@ -2702,23 +2699,22 @@ v4v_sendto(struct v4v_private * p, const void *buf, size_t len, int flags,
 	 * was transformed to a sendmsg -- then things are really
 	 * complicated. We leave it as is for now.
 	 */
-        if (!access_ok(VERIFY_READ, addr, sizeof(v4v_addr_t))) {
+	if (!access_ok(VERIFY_READ, addr, sizeof(v4v_addr_t))) {
 		dump_v4vaddr(addr);
-        	//if (copy_from_user(&addr_local, addr, sizeof(struct sockaddr_v4v))) {
-		//	dump_sockaddr(addr);
-			dprintk_err("Adress not OK %p\n", addr);
-         	//       	ret = -EFAULT;
-		//	goto out;
-		//}
+		//dprintk_err("Adress not OK %p\n", addr);
+		//ret = -EFAULT;
+		//goto out;
 	}
 
         if (flags & MSG_DONTWAIT)
                 nonblock++;
 
-	if (addr) { 
-	sockaddr_to_v4v((struct sockaddr_v4v*)addr, &addr_local);
-	addr->port = addr_local.port;
-	addr->domain= addr_local.domain;
+	/* This is really annoying when it comes to DGRAM stuff.
+	 * Can't figure out what's going on ... */
+	if (addr) {
+		sockaddr_to_v4v((struct sockaddr_v4v *)addr, &addr_local);
+		addr->port = addr_local.port;
+		addr->domain = addr_local.domain;
 	}
 #if 0
 	if (!addr && p->state == V4V_STATE_BOUND) { 
