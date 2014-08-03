@@ -770,7 +770,6 @@ static int get_ring(struct ring *r)
 {
 	int ret;	
 	dprintk_in();
-	//printk(KERN_INFO "GETTTTTTTTTTTTTTT RINGGGGGGGGGGGGGGG\n");
         ret = v4v_atomic_add_unless(&r->refcnt, 1, 0);
 	dprintk_out();
 	return ret;
@@ -3634,12 +3633,12 @@ out:
 }
 
 static int v4v_sock_dgram_recvmsg(struct kiocb *kiocb, struct socket *sock,
-				   struct msghdr *msg, size_t len, int flags)
+				  struct msghdr *msg, size_t len, int flags)
 {
 	int ret = 0;
 
-        struct sock *sk;
-        struct v4v_sock *xsk;
+	struct sock *sk;
+	struct v4v_sock *xsk;
 	int nonblock = flags & O_NONBLOCK;
 	int peek = flags & MSG_PEEK;
 	struct sockaddr_v4v local_addr;
@@ -3651,13 +3650,13 @@ static int v4v_sock_dgram_recvmsg(struct kiocb *kiocb, struct socket *sock,
 	xsk = xen_sk(sk);
 	dump_msghdr(msg);
 
-//v4v_recvfrom_dgram(struct v4v_private *p, void *buf, size_t len, int nonblock, int peek, v4v_addr_t * src)
 	sockaddr_to_v4v(&xsk->priv_data->peer, &local_addr);
 	my_addr.port = local_addr.port;
 	my_addr.domain = local_addr.domain;
 	dump_sockaddr(&local_addr);
-	ret = v4v_recvfrom_dgram(xsk->priv_data, msg->msg_iov->iov_base, msg->msg_iov->iov_len, nonblock, peek, &my_addr);
-	//v4v_hexdump(msg->msg_iov->iov_base, msg->msg_iov->iov_len);
+	ret =
+	    v4v_recvfrom_dgram(xsk->priv_data, msg->msg_iov->iov_base,
+			       msg->msg_iov->iov_len, nonblock, peek, &my_addr);
 	if (ret < 0) {
 		dprintk_err("msg: %p, len:%#lx, ret:%d\n", msg, len, ret);
 	}
@@ -3665,6 +3664,7 @@ out:
 	dprintk_out();
 	return ret;
 }
+
 static int v4v_sock_stream_recvmsg(struct kiocb *kiocb, struct socket *sock,
 				   struct msghdr *msg, size_t len, int flags)
 {
@@ -3932,16 +3932,15 @@ out:
 
 
 static int v4v_sock_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
-				   struct msghdr *msg, size_t len)
+				  struct msghdr *msg, size_t len)
 {
 	int ret = 0;
-        struct sock *sk;
-        struct v4v_sock *xsk;
+	struct sock *sk;
+	struct v4v_sock *xsk;
 	struct sockaddr_v4v my_addr;
 	v4v_addr_t *dest_addr = kmalloc(sizeof(v4v_addr_t), GFP_ATOMIC);
 	v4v_addr_t *local_addr;
 	struct v4v_private *p;
-	//struct sockaddr_in in_addr;
 
 	dprintk_in();
 	dump_msghdr(msg);
@@ -3949,36 +3948,25 @@ static int v4v_sock_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
 	sk = sock->sk;
 	xsk = xen_sk(sk);
 	p = xsk->priv_data;
-	local_addr = &p->r->ring->id.addr;
 	local_addr = &p->peer;
 	dump_msghdr(msg);
 
-	//v4v_hexdump(msg->msg_name, msg->msg_namelen ? msg->msg_namelen : sizeof(struct sockaddr_v4v));
-	if ((msg->msg_name && msg->msg_namelen != 0) && p->state != V4V_STATE_CONNECTED) {
+	if ((msg->msg_name && msg->msg_namelen != 0)
+	    && p->state != V4V_STATE_CONNECTED) {
 		dprintk("msg_name:%p\n", msg->msg_name);
 		sockaddr_to_v4v(msg->msg_name, &my_addr);
-#if 0
-	if (xsk->local_addr.domain == 1) {
-	dest_addr.port = 25365;
-	dest_addr.domain= 3;
-	}
-	else {
-	dest_addr.port = 16690;
-	dest_addr.domain= 1;
-	}
-#endif
 		dest_addr->port = my_addr.port;
-		dest_addr->domain= my_addr.domain;
-	//dump_sockaddr_in(msg->msg_name);
-	//dump_sockaddr(local_addr);
-	//dump_sockaddr(&my_addr);
+		dest_addr->domain = my_addr.domain;
 		dump_v4vaddr(dest_addr);
-		ret = v4v_sendto(xsk->priv_data, msg->msg_iov->iov_base, msg->msg_iov->iov_len, 0, msg->msg_name, 0);
-	}
-	else  {
+		ret =
+		    v4v_sendto(xsk->priv_data, msg->msg_iov->iov_base,
+			       msg->msg_iov->iov_len, 0, msg->msg_name, 0);
+	} else {
 		dprintk("msg_nameNULL, addr:%p\n", local_addr);
 		dump_v4vaddr(local_addr);
-		ret = v4v_sendto(xsk->priv_data, msg->msg_iov->iov_base, msg->msg_iov->iov_len, 0, NULL, 0);
+		ret =
+		    v4v_sendto(xsk->priv_data, msg->msg_iov->iov_base,
+			       msg->msg_iov->iov_len, 0, NULL, 0);
 	}
 
 	//ret = v4v_sendto(xsk->priv_data, msg->msg_iov->iov_base, msg->msg_iov->iov_len, 0, NULL, 0);
@@ -3986,31 +3974,7 @@ out:
 	dprintk_out();
 	return ret;
 }
-#if 0
-static int v4v_sock_dgram_sendmsg(struct kiocb *kiocb, struct socket *sock,
-				   struct msghdr *msg, size_t len)
-{
-	int ret = 0;
-        struct sock *sk;
-        struct v4v_sock *xsk;
-	//struct sockaddr_in in_addr;
 
-	dprintk_in();
-	dump_msghdr(msg);
-
-	sk = sock->sk;
-	xsk = xen_sk(sk);
-	dump_msghdr(msg);
-
-	ret = v4v_sendto(xsk->priv_data, msg->msg_iov->iov_base, msg->msg_iov->iov_len, 0, &xsk->priv_data->peer, 0);
-	//v4v_to_sockaddr(&in_addr, &xsk->priv_data->peer);
-	//dump_sockaddr_in(&in_addr);
-	//ret = v4v_sendto(xsk->priv_data, msg->msg_iov->iov_base, msg->msg_iov->iov_len, 0, NULL, 0);
-out:
-	dprintk_out();
-	return ret;
-}
-#endif
 static int v4v_sock_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
 				   struct msghdr *msg, size_t len)
 {
@@ -4361,7 +4325,7 @@ static void initialize_v4v_sock(struct v4v_sock *x, int protocol)
 }
 
 static int v4v_sock_create(struct net *net, struct socket *sock,
-                        int protocol, int kern)
+			   int protocol, int kern)
 {
 	int rc = 0;
 	struct sock *sk;
@@ -4370,56 +4334,56 @@ static int v4v_sock_create(struct net *net, struct socket *sock,
 
 	dprintk_in();
 
-        if (!sock) {
+	if (!sock) {
 		printk(KERN_ERR "%s: sock is null\n", __func__);
-                rc = -EINVAL;
+		rc = -EINVAL;
 		goto out;
 	}
 
 	printk("%s: protocol:%#lx \n", __func__, protocol);
 #if 0
-        if (protocol && protocol != PF_XEN) {
+	if (protocol && protocol != PF_XEN) {
 		printk("%s: !protocol \n", __func__);
-                return -EPROTONOSUPPORT;
+		return -EPROTONOSUPPORT;
 	}
 #endif
 
-        switch (sock->type) {
-        case SOCK_DGRAM:
+	switch (sock->type) {
+	case SOCK_DGRAM:
 		printk("%s: \n", __func__);
-                sock->ops = &v4v_dgram_ops;
+		sock->ops = &v4v_dgram_ops;
 		my_protocol = V4V_PTYPE_DGRAM;
-                break;
-        case SOCK_STREAM:
-                sock->ops = &v4v_stream_ops;
+		break;
+	case SOCK_STREAM:
+		sock->ops = &v4v_stream_ops;
 		my_protocol = V4V_PTYPE_STREAM;
-                break;
-        default:
+		break;
+	default:
 		printk("%s: default \n", __func__);
-                rc = -ESOCKTNOSUPPORT;
-                goto out;
-        }
+		rc = -ESOCKTNOSUPPORT;
+		goto out;
+	}
 
-        sock->state = SS_UNCONNECTED;
+	sock->state = SS_UNCONNECTED;
 
-        sk = sk_alloc(net, AF_XEN, GFP_KERNEL, &v4v_proto);
-        if (!sk) {
-                rc = -ENOMEM;
-                printk (KERN_ERR "%s: cannot allocate socket: ret = %d\n", __func__, rc);
-                goto out;
-        }
+	sk = sk_alloc(net, AF_XEN, GFP_KERNEL, &v4v_proto);
+	if (!sk) {
+		rc = -ENOMEM;
+		printk(KERN_ERR "%s: cannot allocate socket: ret = %d\n",
+		       __func__, rc);
+		goto out;
+	}
 
-        sock_init_data(sock, sk);
-        sk->sk_family = PF_XEN;
-        sk->sk_protocol = protocol;
-        x = xen_sk(sk);
-        initialize_v4v_sock(x, my_protocol);
+	sock_init_data(sock, sk);
+	sk->sk_family = PF_XEN;
+	sk->sk_protocol = protocol;
+	x = xen_sk(sk);
+	initialize_v4v_sock(x, my_protocol);
 
 out:
-        dprintk_out();
-        return rc;
+	dprintk_out();
+	return rc;
 }
-
 static struct net_proto_family v4v_family_ops = {
   .family         = AF_XEN,
   .create         = v4v_sock_create,
