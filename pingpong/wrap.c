@@ -1,200 +1,357 @@
 #include <stdio.h>
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
-
-
-
 #include <errno.h>
 
 #define __USE_GNU
 #include <dlfcn.h>
+
+#define MAX_SOCKETS 16		/* arbitrary constant */
 #include "../driver/v4v.h"
 
-int socket(int domain, int type, int protocol) 
+/* Helper stuff to keep both socket descriptors and info about
+ * AF_INET and AF_XEN.
+ * FIXME: needs major cleanup and thread safe capabilities */
+
+struct shadow_socket {
+	int sockfd;
+	int v4vsockfd;
+	int acc_sockfd;
+	uint8_t active;
+};
+
+struct socket_array {
+	uint32_t counter;
+	struct shadow_socket arr[MAX_SOCKETS];
+};
+
+void *array;			/* Our global array with socket structs */
+
+/* Init our socket array */
+int init_shadow_struct(void **dispatch)
 {
-  static int (*socket_real)(int, int, int)=NULL;
-  int ret;
-  int domain_real = domain;
+	struct socket_array *sock_array;
 
-  if (!socket_real) socket_real=dlsym(RTLD_NEXT,"socket");
+	if (dispatch != NULL)
+		if (*dispatch != NULL)
+			return 0;
 
-  domain = AF_XEN;
-  if ((ret = socket_real(domain,type,protocol)) < 0) {
-	fprintf(stderr,"socket() %d\n", ret);
-	domain=domain_real;
-  }
-  return ret < 0 ? socket_real(domain,type,protocol) : ret;
+	printf("will init sock_array");
+	//sock_array = malloc(sizeof(struct socket_array)  + sizeof(struct shadow_socket *) * MAX_SOCKETS); 
+	sock_array = malloc(sizeof(struct socket_array));
+	printf("  sock_array:%p\n", sock_array);
 
-  if (getenv("WRAP_DEBUG"))
-      fprintf(stderr,"socket_debug() %d\n", domain);
+	sock_array->counter = 0;
 
-  return -1;
+	*dispatch = sock_array;
+
+	return 0;
 }
 
-ssize_t my_write(int sockfd, const void *buf, size_t len) {
-        int ret = 0, wtotal = 0;
-        while(wtotal < len) {
-                ret = write(sockfd, buf + (wtotal ? wtotal : 0), len - wtotal);
-                if (ret < 0 ) {
-                         perror("write");
-                        exit(-1);
-                }
-                wtotal += ret;
-        }
-        return wtotal;
+/* Upon a socket call, we keep both descriptors (even if 
+ * we don't succeed to get a v4v one, and defer the decision
+ * until the connect/accept call.
+ * This function adds the socket to our static array.
+ */
+int add_shadow_struct(void *dispatch, struct shadow_socket *sock)
+{
+	struct socket_array *socket_arr;
+	struct shadow_socket *shadow_sock;
+	int cnt;
+	socket_arr = dispatch;
+	printf("will add socket:%d, %d to sock_array:%p\n", sock->sockfd,
+	       sock->v4vsockfd, socket_arr);
+	cnt = socket_arr->counter;
+	shadow_sock = &socket_arr->arr[cnt];
+	shadow_sock->sockfd = sock->sockfd;
+	shadow_sock->v4vsockfd = sock->v4vsockfd;
+	shadow_sock->acc_sockfd = 0;
+	shadow_sock->active = 0;
+	socket_arr->counter++;
+	printf("sock_array:%p counter:%d\n", socket_arr, socket_arr->counter);
+
+	return 0;
 }
 
-#if 0
-ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
-                        struct sockaddr *src_addr, socklen_t *addrlen)
+/* Return the socket struct to choose between AF_INET and AF_XEN */
+int get_shadow_struct(void *dispatch, int sockfd, struct shadow_socket **sock)
 {
-        static int(*recvfrom_real)(int , const void *, size_t , int , const struct sockaddr *, socklen_t *)=NULL;
-        int ret = -1, retur=0;
-        int lump = 16348;
-        int start = 0;
-        int wtotal = 0;
-        if (!recvfrom_real) recvfrom_real=dlsym(RTLD_NEXT,"recvfrom");
-//      dump_sockaddr(stderr, dest_addr);
-        ret = recvfrom_real(sockfd, buf, len, flags, src_addr, addrlen);
-        if (ret == -EMSGSIZE) {
-                printf("will do fragmentation\n");
-                while (wtotal <  len) {
-                        retur = recvfrom_real(sockfd, buf + (wtotal ? wtotal : 0), len - wtotal > lump ? lump : len-wtotal, flags, src_addr, addrlen);
-                        printf("len:%u, lump%d, start:%d, retur:%d\n", len, lump, wtotal,retur);
-                        len -= retur;
-                        start+=retur;
-                        wtotal += retur;
-                }
-        }
-	printf("ret:%d\n", ret);
-	printf("ret:%d\n", retur);
-        return  ret > 0 ? ret : retur;
-}
-
-
-
-ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
-                      const struct sockaddr *dest_addr, socklen_t addrlen)
-{
-	static int(*sendto_real)(int , const void *, size_t , int , const struct sockaddr *, socklen_t)=NULL;
-	int ret = -1, retur=0;
-	int lump = 16348;
-	int start = 0;
-	int wtotal = 0;
-#if 0
-	struct sockaddr_in addr_in;
-
-	memcpy(&addr_in, dest_addr, addrlen);
-
-#endif
-	if (!sendto_real) sendto_real=dlsym(RTLD_NEXT,"sendto");
-//	dump_sockaddr(stderr, dest_addr);
-	ret = sendto_real(sockfd, buf, len, flags, dest_addr, addrlen);
-	if (ret < 0 ) {
-		printf("will do fragmentation, ret:%d\n", ret);
-		while (wtotal <  len) {
-			retur = sendto_real(sockfd, buf + (wtotal ? wtotal : 0), (len - wtotal) > lump ? lump : len - wtotal, flags, dest_addr, addrlen);
-			printf("len:%u, lump%d, start:%d, retur:%d\n", len, lump, wtotal,retur);
-			len -= retur;
-			start+=retur;
-			wtotal += retur;
-		}
+	struct socket_array *socket_arr;
+	uint32_t counter = 0, end;
+	socket_arr = dispatch;
+	end = socket_arr->counter;
+	while (counter < end) {
+		if (socket_arr->arr[counter].sockfd == sockfd
+		    || socket_arr->arr[counter].acc_sockfd == sockfd)
+			break;
+		counter++;
 	}
-	printf("ret:%d\n", ret);
-	printf("ret:%d\n", retur);
-	return  ret > 0 ? ret : retur;
-}
-#endif
 
-#if 0
-int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-	static int(*connect_real)(int, const struct sockaddr *, socklen_t)=NULL;
-	int ret = -1;
-	struct sockaddr_in addr_in;
-
-	memcpy(&addr_in, addr, addrlen);
-
-	if (!connect_real) connect_real=dlsym(RTLD_NEXT,"connect");
-	dump_sockaddr(stderr, &addr_in);
-
-	if ((ret = connect_real(sockfd,addr,addrlen)) < 0) {
-	      fprintf(stderr,"connect() %d\n", ret);
+	if (counter != end) {
+		*sock = &socket_arr->arr[counter];
+		return 0;
 	}
+	*sock = NULL;
+	return -1;
+}
+
+/* Macaroni code to actually call both AF_INET and XEN until we succeed to
+ * connect FIXME: needs major cleanup and thread safe capabilities */
+int socket(int domain, int type, int protocol)
+{
+	static int (*socket_real) (int, int, int) = NULL;
+	int ret, v4vret;
+	int domain_real = domain;
+	int protocol_real = protocol;
+	struct shadow_socket *sock;
+
+	if (!socket_real)
+		socket_real = dlsym(RTLD_NEXT, "socket");
+	init_shadow_struct(&array);
+
+	/* Try creating a v4vsocket */
+	domain = AF_XEN;
+	v4vret = socket_real(domain, type, protocol);
+	if (v4vret < 0) {
+		fprintf(stderr, "shadow socket() %d\n", v4vret);
+		goto normal;
+		//domain=domain_real;
+	}
+
+normal:
+	/* Continue creating a normal socket */
+	domain = domain_real;
+	protocol = protocol_real;
+	ret = socket_real(domain, type, protocol);
+	if (ret < 0) {
+		fprintf(stderr, "Error creating socket with AF:%d\n",
+			domain_real);
+		return -1;
+	}
+	sock = malloc(sizeof(struct shadow_socket));
+	sock->sockfd = ret;
+	sock->v4vsockfd = v4vret;
+	printf("adding:%d, %d\n", ret, add_shadow_struct(array, sock));
+	sock->active = 0;
+
+	//return ret < 0 ? socket_real(domain,type,protocol) : ret;
+
+	//if (getenv("WRAP_DEBUG"))
+	//    fprintf(stderr,"socket_debug() %d\n", domain);
+
+	return ret;
+}
+
+int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+	static int (*bind_real) (int, const struct sockaddr *, socklen_t) =
+	    NULL;
+	int ret, v4vret;
+	struct shadow_socket *sock;
+
+	if (!bind_real)
+		bind_real = dlsym(RTLD_NEXT, "bind");
+
+	ret = get_shadow_struct(array, sockfd, &sock);
+	if (ret < 0) {
+		//fprintf(stderr, "failed to get shadow struct\n");
+		goto out;
+	}
+	v4vret = bind_real(sock->v4vsockfd, addr, addrlen);
+	if (v4vret < 0) {
+		//fprintf(stderr, "failed to bind sock with fd:%d, ret:%d\n",
+		//      sock->v4vsockfd, v4vret);
+		goto normal;
+	}
+normal:
+	ret = bind_real(sock->sockfd, addr, addrlen);
+	if (ret < 0) {
+		//fprintf(stderr, "failed to bind sock with fd:%d, ret:%d\n",
+		//      sock->sockfd, ret);
+		goto out;
+	}
+
+out:
 	return ret;
 
 }
 
-
-
-ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
-                      const struct sockaddr *dest_addr, socklen_t addrlen)
+int listen(int sockfd, int backlog)
 {
-	static int(*sendto_real)(int , const void *, size_t , int , const struct sockaddr *, socklen_t)=NULL;
-	int ret = -1;
-	struct sockaddr_in addr_in;
+	static int (*listen_real) (int, int) = NULL;
+	int ret, v4vret;
+	struct shadow_socket *sock;
+	if (!listen_real)
+		listen_real = dlsym(RTLD_NEXT, "listen");
 
-	memcpy(&addr_in, dest_addr, addrlen);
+	ret = get_shadow_struct(array, sockfd, &sock);
+	if (ret < 0) {
+		fprintf(stderr, "failed to get shadow struct\n");
+		goto out;
+	}
+	v4vret = listen_real(sock->v4vsockfd, backlog);
+	if (v4vret < 0) {
+		//fprintf(stderr, "failed to listen with fd:%d, ret:%d\n",
+		//      sock->v4vsockfd, v4vret);
+		goto normal;
+	}
+normal:
+	ret = listen_real(sock->sockfd, backlog);
+	if (ret < 0) {
+		//fprintf(stderr, "failed to listen with fd:%d, ret:%d\n",
+		//      sock->sockfd, ret);
+		goto out;
+	}
 
-	if (!sendto_real) sendto_real=dlsym(RTLD_NEXT,"sendto");
-	dump_sockaddr(stderr, dest_addr);
-	return sendto_real(sockfd, buf, len, flags, dest_addr, addrlen);
+out:
+	return ret;
 }
 
-int     dump_sockaddr(FILE *tfp, struct sockaddr_in *sinptr)
-        {
-        int     k;
+int accept(int sockfd, struct sockaddr *addr, socklen_t * addrlen)
+{
+	static int (*accept_real) (int, const struct sockaddr *, socklen_t *) =
+	    NULL;
+	int ret, v4vret;
+	struct shadow_socket *sock;
 
-        /*  in <in.h>
-        struct  sockaddr_in  {
-                short   sin_family;
-                u_short sin_port;
-                struct  in_addr sin_addr;
-                char    sin_zero[8];
-        }       */
+	if (!accept_real)
+		accept_real = dlsym(RTLD_NEXT, "accept");
 
-        if ( (sinptr == (struct sockaddr_in *)NULL) ||
-             (tfp == (FILE *)NULL) )
-                return(-1);                     /* insurance */
-
-        fprintf(tfp,
-        "\n  struct sockaddr_in { ");
-        k = sinptr->sin_family;
-                                                /* print port number (or
-                                0 = "to be assigned by system" */
-        fprintf(tfp,
-        "\n       u_short sin_port(=%hu);", ntohs(sinptr->sin_port));
-
-                                                /* print ip address */
-        fprintf(tfp,
-        "\n       struct  in_addr sin_addr.s_addr(=%u=%d.%d.%d.%d);",
-                        ntohl(sinptr->sin_addr.s_addr),
-                        (ntohl(sinptr->sin_addr.s_addr) & 0xff000000) >> 24,
-                        (ntohl(sinptr->sin_addr.s_addr) & 0x00ff0000) >> 16,
-                        (ntohl(sinptr->sin_addr.s_addr) & 0x0000ff00) >>  8,
-                        (ntohl(sinptr->sin_addr.s_addr) & 0x000000ff));
-
-        fprintf(tfp,
-        "\n       struct  in_addr sin_addr.s_addr(=%#x, %#x\n)", ntohl(sinptr->sin_addr.s_addr), sinptr->sin_addr.s_addr);
-        fprintf(tfp,
-        "\n       char    sin_zero[8](=%x %x %x %x %x %x %x %x);",
-                        sinptr->sin_zero[0],
-                        sinptr->sin_zero[1],
-                        sinptr->sin_zero[2],
-                        sinptr->sin_zero[3],
-                        sinptr->sin_zero[4],
-                        sinptr->sin_zero[5],
-                        sinptr->sin_zero[6],
-                        sinptr->sin_zero[7]);
-        fprintf(tfp,
-        "\n  } ");
-
-        fflush(tfp);
-        return(0);
-}  /* end of dump_sockaddr */
-
+	ret = get_shadow_struct(array, sockfd, &sock);
+	if (ret < 0) {
+		//fprintf(stderr, "failed to get shadow struct\n");
+		goto out;
+	}
+	v4vret = accept_real(sock->v4vsockfd, addr, addrlen);
+	if (v4vret < 0) {
+		//fprintf(stderr, "failed to accept sock with fd:%d, ret:%d\n",
+		//      sock->v4vsockfd, v4vret);
+		goto normal;
+	}
+	sock->active = 1;
+	sock->acc_sockfd = v4vret;
+	ret = v4vret;
+	goto out;
+normal:
+/* lets try this approach first -- after all the server listens to whatever interface there is */
+#if 1
+	ret = accept_real(sock->sockfd, addr, addrlen);
+	if (ret < 0) {
+		//fprintf(stderr, "failed to accept sock with fd:%d, ret:%d\n",
+		//      sock->sockfd, ret);
+		goto out;
+	}
+	sock->acc_sockfd = ret;
 #endif
+	printf("accepted_socket:%d\n", ret);
+
+out:
+	return ret;
+
+}
+
+int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+	static int (*connect_real) (int, const struct sockaddr *, socklen_t) =
+	    NULL;
+	int ret, v4vret;
+	struct shadow_socket *sock;
+	struct sockaddr_in addr_in;
+
+	if (!connect_real)
+		connect_real = dlsym(RTLD_NEXT, "connect");
+
+	ret = get_shadow_struct(array, sockfd, &sock);
+	if (ret < 0) {
+		fprintf(stderr, "failed to get shadow struct\n");
+		goto out;
+	}
+	v4vret = connect_real(sock->v4vsockfd, addr, addrlen);
+	if (!v4vret) {
+		/* Success!!! */
+		sock->active = 1;
+		ret = v4vret;
+		goto out;
+	}
+	//fprintf(stderr, "will continue with normal sockets\n");
+	//ret = connect_real(sockfd, addr, addrlen);
+	ret = connect_real(sock->sockfd, addr, addrlen);
+	if (ret < 0) {
+		goto out;
+	}
+
+out:
+	return ret;
+
+}
+
+ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+		 struct sockaddr * src_addr, socklen_t * addrlen)
+{
+	static int (*recvfrom_real) (int, const void *, size_t, int,
+				     const struct sockaddr *, socklen_t *) =
+	    NULL;
+	struct shadow_socket *sock;
+	int ret = -1;
+	int real_sock;
+	if (!recvfrom_real)
+		recvfrom_real = dlsym(RTLD_NEXT, "recvfrom");
+
+	ret = get_shadow_struct(array, sockfd, &sock);
+	if (ret < 0) {
+		fprintf(stderr, "failed to get shadow struct\n");
+		goto out;
+	}
+
+	if (sock->active == 1) {
+		real_sock = sock->v4vsockfd;
+		if (sock->acc_sockfd)
+			real_sock = sock->acc_sockfd;
+	} else {
+		real_sock = sock->sockfd;
+		if (sock->acc_sockfd)
+			real_sock = sock->acc_sockfd;
+	}
+
+	ret = recvfrom_real(real_sock, buf, len, flags, src_addr, addrlen);
+out:
+	return ret;
+}
+
+ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+	       const struct sockaddr * dest_addr, socklen_t addrlen)
+{
+	static int (*sendto_real) (int, const void *, size_t, int,
+				   const struct sockaddr *, socklen_t) = NULL;
+	struct shadow_socket *sock;
+	int real_sock;
+	int ret = -1;
+	if (!sendto_real)
+		sendto_real = dlsym(RTLD_NEXT, "sendto");
+
+	ret = get_shadow_struct(array, sockfd, &sock);
+	if (ret < 0) {
+		fprintf(stderr, "failed to get shadow struct\n");
+		goto out;
+	}
+
+	if (sock->active == 1) {
+		real_sock = sock->v4vsockfd;
+		if (sock->acc_sockfd)
+			real_sock = sock->acc_sockfd;
+	}
+
+	else {
+		real_sock = sock->sockfd;
+		if (sock->acc_sockfd)
+			real_sock = sock->acc_sockfd;
+	}
+
+	ret = sendto_real(real_sock, buf, len, flags, dest_addr, addrlen);
+out:
+	return ret;
+}
