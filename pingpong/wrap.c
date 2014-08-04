@@ -13,6 +13,9 @@
 #define MAX_SOCKETS 16		/* arbitrary constant */
 #include "../driver/v4v.h"
 
+#define SOCK_COMPAT 0
+#if SOCK_COMPAT
+
 /* Helper stuff to keep both socket descriptors and info about
  * AF_INET and AF_XEN.
  * FIXME: needs major cleanup and thread safe capabilities */
@@ -99,23 +102,29 @@ int get_shadow_struct(void *dispatch, int sockfd, struct shadow_socket **sock)
 	return -1;
 }
 
+#endif
 /* Macaroni code to actually call both AF_INET and XEN until we succeed to
  * connect FIXME: needs major cleanup and thread safe capabilities */
 int socket(int domain, int type, int protocol)
 {
 	static int (*socket_real) (int, int, int) = NULL;
 	int ret, v4vret;
+#if SOCK_COMPAT
 	int domain_real = domain;
 	int protocol_real = protocol;
 	struct shadow_socket *sock;
+#endif
 
 	if (!socket_real)
 		socket_real = dlsym(RTLD_NEXT, "socket");
+#if SOCK_COMPAT
 	init_shadow_struct(&array);
+#endif
 
 	/* Try creating a v4vsocket */
 	domain = AF_XEN;
 	v4vret = socket_real(domain, type, protocol);
+	ret = v4vret;
 	if (v4vret < 0) {
 		fprintf(stderr, "shadow socket() %d\n", v4vret);
 		goto normal;
@@ -123,6 +132,7 @@ int socket(int domain, int type, int protocol)
 	}
 
 normal:
+#if SOCK_COMPAT
 	/* Continue creating a normal socket */
 	domain = domain_real;
 	protocol = protocol_real;
@@ -142,10 +152,12 @@ normal:
 
 	//if (getenv("WRAP_DEBUG"))
 	//    fprintf(stderr,"socket_debug() %d\n", domain);
+#endif
 
 	return ret;
 }
 
+#if SOCK_COMPAT
 int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
 	static int (*bind_real) (int, const struct sockaddr *, socklen_t) =
@@ -355,3 +367,4 @@ ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
 out:
 	return ret;
 }
+#endif
