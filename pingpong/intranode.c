@@ -369,6 +369,7 @@ void server_stream() {
 	}
 	/*accept*/
 	client.sin_family = family;
+	client.sin_addr.s_addr = partner_address;
 	cliLen = sizeof(client);
 	ret = accept(fd, (struct sockaddr *)&client, &cliLen);
 	if (ret<0) {
