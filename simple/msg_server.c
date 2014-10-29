@@ -55,17 +55,19 @@ int main(int argc, char *argv[])
 		snprintf(sendBuff1, sizeof(sendBuff1), "%.24s\r\n", ctime(&ticks));
 		memset(sendBuff1, 'a', sizeof(sendBuff1));
 		sendBuff1[SIZE1-1]= 'b';
-		printf("\nSIZE-1: %d, sendBuff[SIZE-1]: %c\n", SIZE1-1, sendBuff1[SIZE1-1]);
+		//sendBuff1[SIZE1]= '\0';
+		printf("\nSIZE-1: %d, sendBuff[SIZE1-1]: %c\n", SIZE1-1, sendBuff1[SIZE1-1]);
 
 		snprintf(sendBuff2, sizeof(sendBuff2), "%.24s\r\n", ctime(&ticks));
 		memset(sendBuff2, 'c', sizeof(sendBuff2));
 		sendBuff2[SIZE2-1]= 'b';
-		printf("\nSIZE-1: %d, sendBuff[SIZE-1]: %c\n", SIZE2-1, sendBuff2[SIZE2-1]);
+		//sendBuff2[SIZE2]= '\0';
+		printf("\nSIZE-1: %d, sendBuff[SIZE2-1]: %c\n", SIZE2-1, sendBuff2[SIZE2-1]);
 		
 		snprintf(sendBuff3, sizeof(sendBuff3), "%.24s\r\n", ctime(&ticks));
 		memset(sendBuff3, 'd', sizeof(sendBuff3));
 		sendBuff3[SIZE3-1]= 'b';
-		printf("\nSIZE-1: %d, sendBuff[SIZE-1]: %c\n", SIZE3-1, sendBuff3[SIZE3-1]);
+		printf("\nSIZE-1: %d, sendBuff[SIZE3-1]: %c\n", SIZE3-1, sendBuff3[SIZE3-1]);
 
 		iov[0].iov_base = (void *)sendBuff1;
 		iov[0].iov_len = sizeof(sendBuff1);
@@ -86,7 +88,7 @@ int main(int argc, char *argv[])
 			perror("sendmsg");
 		}
 
-		printf("\n\n total bytes send: %d\n\n", n);
+		printf("\n\ntotal bytes send: %d\n\n", n);
 
 		//write(connfd, sendBuff, sizeof(sendBuff)); 
 	}

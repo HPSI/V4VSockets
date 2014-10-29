@@ -79,7 +79,7 @@ int main(int argc, char *argv[])
 	//n = read(sockfd, recvBuff, sizeof(recvBuff));
 	n = recvmsg(sockfd, &hdr, 0);
 	//{
-		printf("\n n_read: %d \n",n);
+	printf("\ntotal bytes rereceived: %d \n",n);
 //		if (recvBuff[n-1] != 'b') {
 //			printf("here0\n");
 //			last_msg = 0;
@@ -92,18 +92,18 @@ int main(int argc, char *argv[])
 //		recvBuff[n-1] = '\0';
 
 		//	printf("BUFFER: %s\n", recvBuff);
-		if(fputs(hdr.msg_iov[0].iov_base, stdout) == EOF)
-		{
-		    printf("\n Error : Fputs error\n");
-		}
-		if(fputs(hdr.msg_iov[1].iov_base, stdout) == EOF)
-		{
-		    printf("\n Error : Fputs error\n");
-		}
-		if(fputs(hdr.msg_iov[2].iov_base, stdout) == EOF)
-		{
-		    printf("\n Error : Fputs error\n");
-		}
+	if(fputs(hdr.msg_iov[0].iov_base, stdout) == EOF)
+	{
+		printf("\n Error : Fputs error\n");
+	}
+	if(fputs(hdr.msg_iov[1].iov_base, stdout) == EOF)
+	{
+		printf("\n Error : Fputs error\n");
+	}
+	if(fputs(hdr.msg_iov[2].iov_base, stdout) == EOF)
+	{
+		printf("\n Error : Fputs error\n");
+	}
 
 		//if (last_msg) 	break;
 	//} 
