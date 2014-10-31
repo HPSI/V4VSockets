@@ -10,7 +10,7 @@
 #include <arpa/inet.h> 
 
 
-#define SIZE1 1024
+#define SIZE1 1024*32
 #define SIZE2 SIZE1
 #define SIZE3 SIZE1
 int main(int argc, char *argv[])
@@ -31,9 +31,9 @@ int main(int argc, char *argv[])
 		return 1;
 	} 
 
-	memset(recvBuff1, '0',sizeof(recvBuff1));
-	memset(recvBuff2, '0',sizeof(recvBuff2));
-	memset(recvBuff3, '0',sizeof(recvBuff3));
+//	memset(recvBuff1, '0',sizeof(recvBuff1));
+//	memset(recvBuff2, '0',sizeof(recvBuff2));
+//	memset(recvBuff3, '0',sizeof(recvBuff3));
 	if((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
 	{
 		printf("\n Error : Could not create socket \n");

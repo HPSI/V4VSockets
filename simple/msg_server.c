@@ -9,7 +9,7 @@
 #include <sys/types.h>
 #include <time.h> 
 
-#define SIZE1 1024
+#define SIZE1 1024*32
 #define SIZE2 SIZE1
 #define SIZE3 SIZE1
 int main(int argc, char *argv[])
